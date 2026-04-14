@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import rl from 'node:readline/promises';
 import process from 'node:process';
 import { WebsocketProtocol } from './server.ts';
+import { EventEmitter } from 'node:events';
 const rl_interface = rl.createInterface(
 	process.stdin,
 	process.stdout,
@@ -29,6 +30,41 @@ if (!fs.existsSync('keys/pub') ||
 
 const private_key = crypto.createPrivateKey(fs.readFileSync('keys/priv').toString());
 const public_key = crypto.createPublicKey(fs.readFileSync('keys/pub').toString());
+
+/** blabber - the websocket/p2p part of jblabber */
+class Blabber extends EventEmitter {
+	socket: WebSocket;
+	constructor(socker: WebSocket) {
+		this.socket = socket;
+		this.socket.addEventListener('open', () => {
+			this.emit('open')
+		})
+		this.socket.addEventListener('close', () => {
+			this.emit('close')
+		})
+		this.socket.addEventListener('error', () => {
+			this.emit('error')
+		})
+		this.socket.addEventListener('message', (event) => {
+			this.emit('message', event.data.toString())
+			const json = JSON.parse(event.data.toString());
+			if (!json.type) throw `malformed packet ${JSON.stringify(json)}`;
+			if (json.type == 'DataReceive') {
+				const packet = json as WebsocketProtocol;
+				this.emit('packet', {type: json.type, packet});
+				this.emit(json.type, pcket);
+			} else {
+				throw `unknown packet type ${json.type}`;
+			}
+		})
+	}
+
+}
+
+/** jabber - the e2e/chat protocol part of jblabber */
+class Jabber extends EventEmitter {
+	blabber: Blabber;
+}
 
 const ws = new WebSocket('ws://localhost:2137')
 ws.addEventListener('message', (event) => {
