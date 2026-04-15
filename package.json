@@ -1,7 +1,12 @@
 {
   "dependencies": {
+    "@protobuf-ts/plugin": "^2.11.1",
     "@types/node": "^25.6.0",
     "@types/ws": "^8.18.1",
+    "google-protobuf": "^4.0.2",
     "ws": "^8.20.0"
+  },
+  "scripts": {
+    "gen-proto": "protoc --plugin=protoc-gen-ts --ts-out . --proto_path=. protocol.proto"
   }
 }

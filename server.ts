@@ -1,6 +1,20 @@
 import ws, {WebSocketServer, WebSocket} from 'ws';
 import type http from 'http';
 import { Buffer } from 'node:buffer';
+import protobuf from 'google-protobuf';
+//@ts-expect-error:
+globalThis.global = globalThis;
+import * as protocol from './protocol.ts';
+
+const packet_map = new Map([
+	[1, protocol.BadPacketPacket],
+	[2, protocol.ClientListPacket],
+	[3, protocol.ClientListRequestPacket],
+	[4, protocol.DataReceivePacket],
+	[5, protocol.DataSendPacket],
+	[6, protocol.IdentityPacket],
+	[7, protocol.UnknownRecieverPacket]
+])
 
 // deno-lint-ignore no-namespace
 export namespace WebsocketProtocol {
@@ -53,49 +67,64 @@ class ServerClient {
 	socket: WebSocket;
 	server: Server;
 	id: number;
-	text_decoder = new TextDecoder();
-	constructor(server: Server, socket: WebSocket, request: http.IncomingMessage, id: number) {
+	text_encoder = new TextEncoder();
+	constructor(server: Server, socket: WebSocket, _request: http.IncomingMessage, id: number) {
 		this.socket = socket;
 		this.server = server;
 		this.id = id;
 		this.socket.on('message', (...args: [ws.RawData, boolean]) => this.on_ws_message(...args));
 	}
-	on_ws_message(this: ServerClient, data: ws.RawData, isBinary: boolean) {
+	on_ws_message(this: ServerClient, data: ws.RawData, _isBinary: boolean) {
 		// console.log(data)
 		// if (typeof data !== 'string') return;
-		try {
-			const json: WebsocketProtocol.Packet = JSON.parse(data.toString());
-			console.log(json)
-			if (!json.type)
-				return;
-			if (json.type == 'DataSend') {
-				const data_send_packet = json as WebsocketProtocol.DataSendPacket
-				if (typeof data_send_packet.to !== 'number' || isNaN(data_send_packet.to))
-					this.socket.send(JSON.stringify({ type: 'BadPacket' } as WebsocketProtocol.BadPacketPacket));
-				this.server.send_to(this.id, data_send_packet.to, data_send_packet.data)
-			} else if (json.type == 'ClientListRequest') {
-					this.socket.send(JSON.stringify({
-						type: 'ClientList',
-						clients: this.server.clients.keys().toArray()
-					} as WebsocketProtocol.ClientListPacket));
-			}
-		} catch (_) {
-			/**/
+		// try {
+		// 	const json: WebsocketProtocol.Packet = JSON.parse(data.toString());
+		// 	console.log(json)
+		// 	if (!json.type)
+		// 		return;
+		// 	if (json.type == 'DataSend') {
+		// 		const data_send_packet = json as WebsocketProtocol.DataSendPacket
+		// 		if (typeof data_send_packet.to !== 'number' || isNaN(data_send_packet.to))
+		// 			this.socket.send(JSON.stringify({ type: 'BadPacket' } as WebsocketProtocol.BadPacketPacket));
+		// 		this.server.send_to(this.id, data_send_packet.to, data_send_packet.data)
+		// 	} else if (json.type == 'ClientListRequest') {
+		// 			this.socket.send(JSON.stringify({
+		// 				type: 'ClientList',
+		// 				clients: this.server.clients.keys().toArray()
+		// 			} as WebsocketProtocol.ClientListPacket));
+		// 	}
+		// } catch (_) {
+		// 	/**/
+		// }
+		console.log(data)
+		if (typeof data === 'string') return console.error('is string');
+		const uh = new Uint8Array(data as Buffer | ArrayBuffer);
+		console.log(uh, uh[0], packet_map.get(uh[0]))
+		if (!packet_map.has(uh[0])) {
+			console.warn('unknown packet type', uh[0]);
+			return;
 		}
+
+		const fucksamoifmassoifntnvsdkmkmo = packet_map.get(uh[0])!;
+
+		const killme = fucksamoifmassoifntnvsdkmkmo.fromBinary(uh.slice(1));
+
+		console.log(killme)
 	}
 	receive(data: Buffer | Uint8Array | string, from: number) {
-		let send_data: string;
+		let send_data: Uint8Array;
 		if (typeof data === 'string')
-			send_data = data
+			send_data = this.text_encoder.encode(data)
 		else if (data instanceof Uint8Array)
-			send_data = this.text_decoder.decode(data)
+			send_data = data
 		else
-			send_data = (data as Buffer).toString();
-		this.socket.send(JSON.stringify({
-			type: 'DataReceive',
-			data: send_data,
-			from
-		} as WebsocketProtocol.DataReceivePacket))
+			send_data = new Uint8Array(data as Buffer);
+		
+		// this.socket.send(JSON.stringify({
+		// 	type: 'DataReceive',
+		// 	data: send_data,
+		// 	from
+		// } as WebsocketProtocol.DataReceivePacket))
 	}
 }
 
