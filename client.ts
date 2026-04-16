@@ -80,8 +80,11 @@ class Jabber extends EventEmitter {
 }
 
 const ws = new WebSocket('ws://localhost:2137')
-ws.addEventListener('message', (event) => {
-	console.log(String(event.data))
+ws.addEventListener('message', async (event) => {
+	if (typeof event.data === 'string')
+		console.log(String(event.data))
+	else
+		console.log(await (event.data as Blob).bytes())
 })
 ws.addEventListener('open', (event) => {
 	console.log('open')

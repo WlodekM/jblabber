@@ -2,19 +2,66 @@ import ws, {WebSocketServer, WebSocket} from 'ws';
 import type http from 'http';
 import { Buffer } from 'node:buffer';
 import protobuf from 'google-protobuf';
+import { MessageType } from "@protobuf-ts/runtime";
 //@ts-expect-error:
 globalThis.global = globalThis;
 import * as protocol from './protocol.ts';
 
-const packet_map = new Map([
-	[1, protocol.BadPacketPacket],
-	[2, protocol.ClientListPacket],
-	[3, protocol.ClientListRequestPacket],
-	[4, protocol.DataReceivePacket],
-	[5, protocol.DataSendPacket],
-	[6, protocol.IdentityPacket],
-	[7, protocol.UnknownRecieverPacket]
-])
+enum PacketType {
+	BadPacketPacket = 1,
+	ClientListPacket = 2,
+	ClientListRequestPacket = 3,
+	DataReceivePacket = 4,
+	DataSendPacket = 5,
+	IdentityPacket = 6,
+	UnknownRecieverPacket = 7
+}
+
+type PacketDataMap = {
+	1: protocol.BadPacketPacket,
+	2: protocol.ClientListPacket,
+	3: protocol.ClientListRequestPacket,
+	4: protocol.DataReceivePacket,
+	5: protocol.DataSendPacket,
+	6: protocol.IdentityPacket,
+	7: protocol.UnknownRecieverPacket
+}
+
+const packet_map: { [K in keyof PacketDataMap]: MessageType<PacketDataMap[K]> } = {
+	1: protocol.BadPacketPacket,
+	2: protocol.ClientListPacket,
+	3: protocol.ClientListRequestPacket,
+	4: protocol.DataReceivePacket,
+	5: protocol.DataSendPacket,
+	6: protocol.IdentityPacket,
+	7: protocol.UnknownRecieverPacket
+}
+
+class BlabberPacket<K extends keyof PacketDataMap> {
+	kind: K;
+	protobuf_message: PacketDataMap[K];
+	message_class: MessageType<PacketDataMap[K]>;
+	constructor(kind: K, from?: Uint8Array) {
+		if (!(kind in packet_map))
+			throw 'invalid packet kind';
+		this.kind = kind;
+		this.message_class = packet_map[kind];
+		if (from)
+			this.protobuf_message = this.message_class.fromBinary(from)
+		else
+			this.protobuf_message = this.message_class.create()
+	}
+	serialize(): Uint8Array {
+		const message_class = packet_map[this.kind];
+		return new Uint8Array([this.kind, ...message_class.toBinary(this.protobuf_message)])
+	}
+	static deserialize(packet: Uint8Array): BlabberPacket<keyof PacketDataMap> {
+		const kind = packet[0]
+		if (kind === undefined || !(kind in packet_map))
+			throw 'invalid packet kind'
+		return new BlabberPacket(kind as keyof PacketDataMap, packet.slice(1));
+	}
+}
 
 // deno-lint-ignore no-namespace
 export namespace WebsocketProtocol {
@@ -63,6 +110,11 @@ export namespace WebsocketProtocol {
 	// }
 }
 
+function rawData_to_uint8array(data:ws.RawData) {
+	//@ts-ignore:
+	return new Uint8Array(data)
+}
+
 class ServerClient {
 	socket: WebSocket;
 	server: Server;
@@ -98,18 +150,22 @@ class ServerClient {
 		// }
 		console.log(data)
 		if (typeof data === 'string') return console.error('is string');
-		const uh = new Uint8Array(data as Buffer | ArrayBuffer);
-		console.log(uh, uh[0], packet_map.get(uh[0]))
-		if (!packet_map.has(uh[0])) {
-			console.warn('unknown packet type', uh[0]);
+		const uint8_data = rawData_to_uint8array(data);
+		let packet;
+		try {
+			packet = BlabberPacket.deserialize(uint8_data);
+		} catch (error) {
+			console.warn(error);
 			return;
 		}
-
-		const fucksamoifmassoifntnvsdkmkmo = packet_map.get(uh[0])!;
-
-		const killme = fucksamoifmassoifntnvsdkmkmo.fromBinary(uh.slice(1));
-
-		console.log(killme)
+		
+		const type = packet.message_class.typeName;
+		if (type === 'ClientListRequestPacket') {
+			const response = new BlabberPacket(PacketType.ClientListPacket)
+			response.protobuf_message.clients = this.server.clients.keys().toArray();
+			this.socket.send(response.serialize())
+			return;
+		}
 	}
 	receive(data: Buffer | Uint8Array | string, from: number) {
 		let send_data: Uint8Array;
@@ -118,7 +174,7 @@ class ServerClient {
 		else if (data instanceof Uint8Array)
 			send_data = data
 		else
-			send_data = new Uint8Array(data as Buffer);
+			send_data = rawData_to_uint8array(data as Buffer);
 		
 		// this.socket.send(JSON.stringify({
 		// 	type: 'DataReceive',
