@@ -6,8 +6,9 @@ import { MessageType } from "@protobuf-ts/runtime";
 //@ts-expect-error:
 globalThis.global = globalThis;
 import * as protocol from './protocol.ts';
+import EventEmitter from 'node:events';
 
-enum PacketType {
+export enum PacketType {
 	BadPacketPacket = 1,
 	ClientListPacket = 2,
 	ClientListRequestPacket = 3,
@@ -37,7 +38,7 @@ const packet_map: { [K in keyof PacketDataMap]: MessageType<PacketDataMap[K]> } 
 	7: protocol.UnknownRecieverPacket
 }
 
-class BlabberPacket<K extends keyof PacketDataMap> {
+export class BlabberPacket<K extends keyof PacketDataMap> {
 	kind: K;
 	protobuf_message: PacketDataMap[K];
 	message_class: MessageType<PacketDataMap[K]>;
@@ -110,61 +111,43 @@ export namespace WebsocketProtocol {
 	// }
 }
 
-function rawData_to_uint8array(data:ws.RawData) {
-	//@ts-ignore:
-	return new Uint8Array(data)
-}
-
-class ServerClient {
+export class BlabberClient {
+	static rawData_to_uint8array(data:ws.RawData) {
+		//@ts-ignore:
+		return new Uint8Array(data)
+	}
 	socket: WebSocket;
-	server: Server;
+	server: BlabberServer;
 	id: number;
 	text_encoder = new TextEncoder();
-	constructor(server: Server, socket: WebSocket, _request: http.IncomingMessage, id: number) {
+	constructor(server: BlabberServer, socket: WebSocket, _request: http.IncomingMessage, id: number) {
 		this.socket = socket;
 		this.server = server;
 		this.id = id;
 		this.socket.on('message', (...args: [ws.RawData, boolean]) => this.on_ws_message(...args));
 	}
-	on_ws_message(this: ServerClient, data: ws.RawData, _isBinary: boolean) {
-		// console.log(data)
-		// if (typeof data !== 'string') return;
-		// try {
-		// 	const json: WebsocketProtocol.Packet = JSON.parse(data.toString());
-		// 	console.log(json)
-		// 	if (!json.type)
-		// 		return;
-		// 	if (json.type == 'DataSend') {
-		// 		const data_send_packet = json as WebsocketProtocol.DataSendPacket
-		// 		if (typeof data_send_packet.to !== 'number' || isNaN(data_send_packet.to))
-		// 			this.socket.send(JSON.stringify({ type: 'BadPacket' } as WebsocketProtocol.BadPacketPacket));
-		// 		this.server.send_to(this.id, data_send_packet.to, data_send_packet.data)
-		// 	} else if (json.type == 'ClientListRequest') {
-		// 			this.socket.send(JSON.stringify({
-		// 				type: 'ClientList',
-		// 				clients: this.server.clients.keys().toArray()
-		// 			} as WebsocketProtocol.ClientListPacket));
-		// 	}
-		// } catch (_) {
-		// 	/**/
-		// }
-		console.log(data)
-		if (typeof data === 'string') return console.error('is string');
-		const uint8_data = rawData_to_uint8array(data);
-		let packet;
+	on_ws_message(this: BlabberClient, data: ws.RawData, _isBinary: boolean) {
 		try {
-			packet = BlabberPacket.deserialize(uint8_data);
+			console.log(data)
+			if (typeof data === 'string') return console.error('is string');
+			const uint8_data = (this.constructor as typeof BlabberClient).rawData_to_uint8array(data);
+			let packet;
+			try {
+				packet = BlabberPacket.deserialize(uint8_data);
+			} catch (error) {
+				console.warn(error);
+				return;
+			}
+			
+			const type = packet.message_class.typeName;
+			if (type === 'ClientListRequestPacket') {
+				const response = new BlabberPacket(PacketType.ClientListPacket)
+				response.protobuf_message.clients = this.server.clients.keys().toArray();
+				this.socket.send(response.serialize())
+				return;
+			}
 		} catch (error) {
-			console.warn(error);
-			return;
-		}
-		
-		const type = packet.message_class.typeName;
-		if (type === 'ClientListRequestPacket') {
-			const response = new BlabberPacket(PacketType.ClientListPacket)
-			response.protobuf_message.clients = this.server.clients.keys().toArray();
-			this.socket.send(response.serialize())
-			return;
+			console.error(error)
 		}
 	}
 	receive(data: Buffer | Uint8Array | string, from: number) {
@@ -174,7 +157,7 @@ class ServerClient {
 		else if (data instanceof Uint8Array)
 			send_data = data
 		else
-			send_data = rawData_to_uint8array(data as Buffer);
+			send_data = (this.constructor as typeof BlabberClient).rawData_to_uint8array(data as Buffer);
 		
 		// this.socket.send(JSON.stringify({
 		// 	type: 'DataReceive',
@@ -184,11 +167,26 @@ class ServerClient {
 	}
 }
 
-class Server {
-	clients: Map<number, ServerClient> = new Map();
+export declare interface BlabberServer {
+    on(event: 'open', listener: () => void): this;
+    on(event: 'connection', listener: (client: BlabberClient) => void): this;
+    // deno-lint-ignore ban-types
+    on(event: string, listener: Function): this;
+}
+
+/**
+ * A Blabber server
+ */
+export class BlabberServer extends EventEmitter {
+	clients: Map<number, BlabberClient> = new Map();
 	ws: WebSocketServer;
 
-	get_id(): number {
+	/**
+	 * Generates a unique identifier
+	 * It is ensured that no client in this instance's BlabberServer.clients has this id
+	 * @returns {number} The unique id
+	 */
+	generate_id(): number {
 		let id: number | undefined;
 		while (id === undefined || new Set(this.clients.keys()).has(id))
 			id = Math.floor(Math.random() * (2 ** 16));
@@ -196,18 +194,31 @@ class Server {
 	}
 
 	constructor(port: number = 2137) {
+		super();
 		this.ws = new WebSocketServer({
 			port
 		});
 		this.ws.on('connection', (...args) => this.on_ws_conenction(...args))
+		this.ws.on('open', () => {
+			this.emit('open')
+		})
 	}
 
-	on_ws_conenction(this: Server, socket: WebSocket, request: http.IncomingMessage) {
-		const client_id = this.get_id();
-		const client = new ServerClient(this, socket, request, client_id);
+	/**
+	 * Handler for new websocket server connections
+	 */
+	on_ws_conenction(this: BlabberServer, socket: WebSocket, request: http.IncomingMessage) {
+		const client_id = this.generate_id();
+		const client = new BlabberClient(this, socket, request, client_id);
 		this.clients.set(client_id, client);
+		this.emit('connection', client)
 	}
 
+	/**
+	 * Helper function to send data to a client
+	 * This wil be wrapped in a DataReceivePacket message
+	 * @returns {null | 'ok'} 'ok' if no errors occured, null if the client was not found
+	 */
 	send_to(from: number, id: number, data: Buffer | Uint8Array | string): null | 'ok' {
 		if (!this.clients.has(id))
 			return null;
@@ -216,4 +227,4 @@ class Server {
 	}
 }
 
-const server = new Server();
+const server = new BlabberServer();
