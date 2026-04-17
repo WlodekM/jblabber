@@ -2,10 +2,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import rl from 'node:readline/promises';
 import process from 'node:process';
-import { WebsocketProtocol } from './server.ts';
+import { BlabberPacket, PacketDataMap, PacketType } from './blabber.ts';
 import { EventEmitter } from 'node:events';
-import protobuf from 'google-protobuf';
-import * as protocol from './protocol.ts';
+import * as protocol from './blabber_protocol.ts';
 const rl_interface = rl.createInterface(
 	process.stdin,
 	process.stdout,
@@ -33,8 +32,11 @@ if (!fs.existsSync('keys/pub') ||
 const private_key = crypto.createPrivateKey(fs.readFileSync('keys/priv').toString());
 const public_key = crypto.createPublicKey(fs.readFileSync('keys/pub').toString());
 
+const te = new TextEncoder()
+const PACKET_SIGNATURE = te.encode('JABR')
+
 /** blabber - the websocket/p2p part of jblabber */
-class Blabber extends EventEmitter {
+class BlabberClient extends EventEmitter {
 	socket: WebSocket;
 	constructor(socket: WebSocket) {
 		super();
@@ -48,33 +50,37 @@ class Blabber extends EventEmitter {
 		this.socket.addEventListener('error', () => {
 			this.emit('error')
 		})
-		this.socket.addEventListener('message', (event) => {
-			this.emit('message', event.data.toString())
-			const json = JSON.parse(event.data.toString());
-			if (!json.type) throw `malformed packet ${JSON.stringify(json)}`;
-			if (json.type == 'DataReceive') {
-				const packet = json as WebsocketProtocol.DataReceivePacket;
-				this.emit('packet', {type: json.type, packet});
-				this.emit(json.type, packet);
-			} else {
-				throw `unknown packet type ${json.type}`;
-			}
+		this.socket.addEventListener('message', async (event) => {
+			if (typeof event.data === 'string')
+				return;
+			
+			const bytes = await (event.data as Blob).bytes();
+			// if (bytes[0] && bytes.slice(0, 3).every((v, i) => []))
+			const packet = BlabberPacket.deserialize(bytes);
+			this.emit('packet$'+packet.kind, packet);
+			this.emit('packet', packet);
+			this.emit(packet.message_class.typeName, packet);
 		})
 	}
-	wait_for_packet(type: WebsocketProtocol.PacketType): Promise<WebsocketProtocol.Packet> {
+	wait_for_packet(type: PacketType): Promise<BlabberPacket<PacketType>> {
 		return new Promise((resolve) => {
-			this.once(type, resolve)
+			this.once(`packet$${type}`, resolve)
 		})
+	}
+	send_packet<T extends PacketType>(kind: PacketType, data: PacketDataMap[T]) {
+		const packet = new BlabberPacket(kind);
+		packet.protobuf_message = data;
+		this.socket.send(packet.serialize())
 	}
 }
 
-/** jabber - the e2e/chat protocol part of jblabber */
+/** jabber - the e2ee/chat protocol part of jblabber */
 class Jabber extends EventEmitter {
-	blabber: Blabber;
+	blabber: BlabberClient;
 	handle_poke() {}
 	constructor(url: string = 'ws://localhost:2137') {
 		super()
-		this.blabber = new Blabber(new WebSocket(url));
+		this.blabber = new BlabberClient(new WebSocket(url));
 
 	}
 }
@@ -83,8 +89,11 @@ const ws = new WebSocket('ws://localhost:2137')
 ws.addEventListener('message', async (event) => {
 	if (typeof event.data === 'string')
 		console.log(String(event.data))
-	else
-		console.log(await (event.data as Blob).bytes())
+	else {
+		const bytes = await (event.data as Blob).bytes();
+		const packet = BlabberPacket.deserialize(bytes);
+		console.log(packet.kind, packet.message_class.typeName, packet.protobuf_message)
+	}
 })
 ws.addEventListener('open', (event) => {
 	console.log('open')
@@ -97,15 +106,16 @@ ws.addEventListener('error', (event) => {
 })
 
 rl_interface.on('SIGINT', () => {
-	Deno.exit(0)
+	process.exit(0)
 });
-rl_interface.on('close', () => Deno.exit(0));
+rl_interface.on('close', () => process.exit(0));
 while (true) {
 	const command = await rl_interface.question(': ')
 	console.log(JSON.stringify(command))
-	if (command == null || command == '/exit')
-		Deno.exit(0);
-	if (command == '/list') {
+	if (command == null || command == '/exit') {
+		ws.close();
+		break
+	} else if (command == '/list') {
 		const uh = protocol.ClientListRequestPacket.create();
 		const fuckme = protocol.ClientListRequestPacket.toBinary(uh)
 		ws.send(new Uint8Array([3, ...fuckme]))

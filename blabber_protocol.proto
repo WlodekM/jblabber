@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+// Server -> Client
+message DataReceivePacket {
+	bytes data = 1;
+	uint32 from = 2;
+}
+message ClientListPacket {
+	repeated uint32 clients = 3;
+}
+message BadPacketPacket {}
+message UnknownRecieverPacket {}
+message IdentityPacket {
+	uint32 you = 2;
+	repeated uint32 clients = 3;
+}
+// Client -> Server
+message DataSendPacket {
+	bytes data = 1;
+	uint32 to = 2;
+}
+message DataAnnouncePacket {
+	bytes data = 1;
+}
+message ClientListRequestPacket {}
