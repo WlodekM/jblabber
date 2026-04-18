@@ -1,0 +1,11 @@
+{
+	"buildOptions": {
+
+	},
+	"files": [
+		"client.ts"
+	],
+	"compilerOptions": {
+		"rewriteRelativeImportExtensions": true
+	}
+}

@@ -18,8 +18,8 @@ message JabberHelloResponse {
 	bytes encrypted_public_key = 5;
 }
 message JabberHandshakeReject {
-	JabberIdentify me = 3;
-	bytes public_key = 4;
+	// JabberIdentify me = 3;
+	// bytes public_key = 4;
 }
 
 /*handshake example

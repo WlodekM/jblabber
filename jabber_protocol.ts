@@ -56,6 +56,19 @@ export interface JabberHelloResponse {
      */
     encryptedPublicKey: Uint8Array;
 }
+/**
+ * @generated from protobuf message JabberHandshakeReject
+ */
+export interface JabberHandshakeReject {
+    /**
+     * @generated from protobuf field: JabberIdentify me = 3
+     */
+    me?: JabberIdentify;
+    /**
+     * @generated from protobuf field: bytes public_key = 4
+     */
+    publicKey: Uint8Array;
+}
 // handshake example
 // cassandra: username="cassandra" hash=0x1337... key=0xC...
 // alice: username="alice" hash=0x80085... key=0xA...
@@ -258,6 +271,60 @@ class JabberHelloResponse$Type extends MessageType<JabberHelloResponse> {
  * @generated MessageType for protobuf message JabberHelloResponse
  */
 export const JabberHelloResponse = new JabberHelloResponse$Type();
+// @generated message type with reflection information, may provide speed optimized methods
+class JabberHandshakeReject$Type extends MessageType<JabberHandshakeReject> {
+    constructor() {
+        super("JabberHandshakeReject", [
+            { no: 3, name: "me", kind: "message", T: () => JabberIdentify },
+            { no: 4, name: "public_key", kind: "scalar", T: 12 /*ScalarType.BYTES*/ }
+        ]);
+    }
+    create(value?: PartialMessage<JabberHandshakeReject>): JabberHandshakeReject {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        message.publicKey = new Uint8Array(0);
+        if (value !== undefined)
+            reflectionMergePartial<JabberHandshakeReject>(this, message, value);
+        return message;
+    }
+    internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: JabberHandshakeReject): JabberHandshakeReject {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                case /* JabberIdentify me */ 3:
+                    message.me = JabberIdentify.internalBinaryRead(reader, reader.uint32(), options, message.me);
+                    break;
+                case /* bytes public_key */ 4:
+                    message.publicKey = reader.bytes();
+                    break;
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    internalBinaryWrite(message: JabberHandshakeReject, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        /* JabberIdentify me = 3; */
+        if (message.me)
+            JabberIdentify.internalBinaryWrite(message.me, writer.tag(3, WireType.LengthDelimited).fork(), options).join();
+        /* bytes public_key = 4; */
+        if (message.publicKey.length)
+            writer.tag(4, WireType.LengthDelimited).bytes(message.publicKey);
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message JabberHandshakeReject
+ */
+export const JabberHandshakeReject = new JabberHandshakeReject$Type();
 // @generated message type with reflection information, may provide speed optimized methods
 class JabberMessagePacket$Type extends MessageType<JabberMessagePacket> {
     constructor() {
