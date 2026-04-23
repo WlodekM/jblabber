@@ -10,5 +10,6 @@
   },
   "scripts": {
     "gen-proto": "npx protoc --ts_out . --proto_path . blabber_protocol.proto"
-  }
+  },
+  "type": "module"
 }

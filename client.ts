@@ -6,6 +6,7 @@ import { BlabberPacket, PacketDataMap, PacketType as BlabberPacketType, PacketTy
 import { EventEmitter } from 'node:events';
 // import * as blabber_protocol from './blabber_protocol.ts';
 import * as jabber_protocol from './jabber_protocol.ts';
+import * as blabber_protocol from './blabber_protocol.ts';
 import { MessageType } from "@protobuf-ts/runtime";
 import { Buffer } from 'node:buffer';
 
@@ -35,8 +36,8 @@ export class BlabberClient extends EventEmitter {
 		this.socket.addEventListener('close', () => {
 			this.emit('close')
 		})
-		this.socket.addEventListener('error', () => {
-			this.emit('error')
+		this.socket.addEventListener('error', (e) => {
+			this.emit('error', e)
 		})
 		this.socket.addEventListener('message', async (event) => {
 			if (typeof event.data === 'string')
@@ -84,13 +85,13 @@ export class BlabberClient extends EventEmitter {
 		this.send_packet(BlabberPacketType.DataSendPacket, {
 			data,
 			to
-		} as PacketDataMap[BlabberPacketType.DataSendPacket])
+		} as blabber_protocol.DataSendPacket)
 	}
 	announce(data: Uint8Array) {
 		console.log('announce', data)
 		this.send_packet(BlabberPacketType.DataAnnouncePacket, {
 			data
-		} as PacketDataMap[BlabberPacketType.DataAnnouncePacket])
+		} as blabber_protocol.DataAnnouncePacket)
 	}
 }
 
@@ -189,7 +190,7 @@ class Jabber extends EventEmitter {
 			throw new Error('no');
 		return new Promise((resolve,reject) => {
 			const postfix = from === undefined ? '' : '@'+from
-			let timeout: number;
+			let timeout: number | undefined;
 			setTimeout(() => {
 				if (types.length == 1)
 					this.off(`packet$${types[0]}`+postfix, end)
@@ -303,7 +304,7 @@ class Jabber extends EventEmitter {
 				const response = new JabberPacket(JabberPacketType.JabberHelloResponse);
 				response.protobuf_message.encryptedPublicKey =
 					Jabber.buffer_to_uint8array(
-						crypto.publicEncrypt(public_key, this.public_key)
+						crypto.publicEncrypt(public_key, this.public_key.export({format: 'der', type: 'spki'}))
 					);
 				response.protobuf_message.me = this.get_identify_packet().protobuf_message;
 				this.blabber.send_to(response.serialize(), from);
@@ -336,10 +337,10 @@ class Jabber extends EventEmitter {
 
 ////////////
 
-function attachEELogger(ee:EventEmitter) {
+function attachEELogger(ee:EventEmitter, label?: string) {
 	const emit = ee.emit;
 	ee.emit = function name(eventName: string | symbol, ...args: any[]) {
-		console.log('emit', eventName, ...args);
+		console.log(`[${label??''}] emit`, eventName, ...args);
 		return emit.call(this, eventName, ...args);
 	}
 }
@@ -358,8 +359,10 @@ if (!fs.existsSync('profile/pub_key') ||
 ) {
 	console.log('keys not found, creating new key pair')
 	// KeyPairExportOptions<"spki", "pkcs8">
-	const key_pair = crypto.generateKeyPairSync('ed25519');
-	// console.log(key_pair.privateKey, key_pair.publicKey);
+	const key_pair = crypto.generateKeyPairSync('rsa', {
+		modulusLength: 512
+	});
+	console.log(crypto.publicEncrypt(key_pair.publicKey, 'test'));
 	if (fs.existsSync('profile/pub_key'))
 		fs.truncateSync('profile/pub_key');
 	fs.writeFileSync('profile/pub_key', key_pair.publicKey.export({format: 'pem', type: 'spki'}));
@@ -380,22 +383,35 @@ if (!fs.existsSync('profile/username')) {
 const private_key = crypto.createPrivateKey(fs.readFileSync('profile/priv_key').toString());
 const public_key = crypto.createPublicKey(fs.readFileSync('profile/pub_key').toString());
 
-const a = /*Jabber.buffer_to_uint8array*/(public_key.export({format: 'der', type: 'spki'}));
-const aa = /*Buffer.from*/(a);
-console.log(a, aa)
-const b = crypto.createPublicKey({
-	key: aa,
-	format: 'der',
-	type: 'spki'
-});
-console.log(crypto.publicEncrypt(b, 'meow'))
-process.exit(0)
+if (
+	private_key.asymmetricKeyType !== 'rsa' ||
+	public_key.asymmetricKeyType !== 'rsa'
+) {
+	console.warn('ya keys are fucked mate, restart the pogram to generate new wuns');
+	fs.rmSync('profile/priv_key')
+	fs.rmSync('profile/pub_key')
+	process.exit(1)
+}
+
+// const a = /*Jabber.buffer_to_uint8array*/(public_key.export({format: 'der', type: 'spki'}));
+// const aa = /*Buffer.from*/(a);
+// console.log(a, aa)
+// const b = crypto.createPublicKey({
+// 	key: aa,
+// 	format: 'der',
+// 	type: 'spki'
+// });
+// console.log(b.asymmetricKeyType)
+// console.log(crypto.publicEncrypt(public_key, 'meow'))
+// console.log(crypto.publicEncrypt(b, 'meow'))
+
+// process.exit(0)
 const username = fs.readFileSync('profile/username').toString()
 
-// const jabber = new Jabber('ws://localhost:2137', username, public_key, private_key);
+const jabber = new Jabber('ws://localhost:2137', username, public_key, private_key);
 
-// attachEELogger(jabber)
-// attachEELogger(jabber.blabber)
+attachEELogger(jabber, 'jabber')
+attachEELogger(jabber.blabber, 'blabber')
 
 // const ws = new WebSocket('ws://localhost:2137')
 // ws.addEventListener('message', async (event) => {

@@ -1,11 +1,14 @@
 {
 	"buildOptions": {
-
+		"dry": false,
+		"incremental": true
 	},
 	"files": [
 		"client.ts"
 	],
 	"compilerOptions": {
-		"rewriteRelativeImportExtensions": true
-	}
+		"rewriteRelativeImportExtensions": true,
+		"outDir": "dist",
+		"lib": ["ES2025"]
+	},
 }
