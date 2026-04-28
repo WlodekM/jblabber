@@ -25,6 +25,10 @@ export interface JabberIdentify {
      * @generated from protobuf field: bytes hash = 2
      */
     hash: Uint8Array;
+    /**
+     * @generated from protobuf field: optional bool new = 6
+     */
+    new?: boolean;
 }
 /**
  * initiate handshake with jabber user
@@ -57,17 +61,12 @@ export interface JabberHelloResponse {
     encryptedPublicKey: Uint8Array;
 }
 /**
+ * JabberIdentify me = 3;
+ * bytes public_key = 4;
+ *
  * @generated from protobuf message JabberHandshakeReject
  */
 export interface JabberHandshakeReject {
-    /**
-     * @generated from protobuf field: JabberIdentify me = 3
-     */
-    me?: JabberIdentify;
-    /**
-     * @generated from protobuf field: bytes public_key = 4
-     */
-    publicKey: Uint8Array;
 }
 // handshake example
 // cassandra: username="cassandra" hash=0x1337... key=0xC...
@@ -113,7 +112,8 @@ class JabberIdentify$Type extends MessageType<JabberIdentify> {
     constructor() {
         super("JabberIdentify", [
             { no: 1, name: "username", kind: "scalar", T: 9 /*ScalarType.STRING*/ },
-            { no: 2, name: "hash", kind: "scalar", T: 12 /*ScalarType.BYTES*/ }
+            { no: 2, name: "hash", kind: "scalar", T: 12 /*ScalarType.BYTES*/ },
+            { no: 6, name: "new", kind: "scalar", opt: true, T: 8 /*ScalarType.BOOL*/ }
         ]);
     }
     create(value?: PartialMessage<JabberIdentify>): JabberIdentify {
@@ -135,6 +135,9 @@ class JabberIdentify$Type extends MessageType<JabberIdentify> {
                 case /* bytes hash */ 2:
                     message.hash = reader.bytes();
                     break;
+                case /* optional bool new */ 6:
+                    message.new = reader.bool();
+                    break;
                 default:
                     let u = options.readUnknownField;
                     if (u === "throw")
@@ -153,6 +156,9 @@ class JabberIdentify$Type extends MessageType<JabberIdentify> {
         /* bytes hash = 2; */
         if (message.hash.length)
             writer.tag(2, WireType.LengthDelimited).bytes(message.hash);
+        /* optional bool new = 6; */
+        if (message.new !== undefined)
+            writer.tag(6, WireType.Varint).bool(message.new);
         let u = options.writeUnknownFields;
         if (u !== false)
             (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
@@ -274,14 +280,10 @@ export const JabberHelloResponse = new JabberHelloResponse$Type();
 // @generated message type with reflection information, may provide speed optimized methods
 class JabberHandshakeReject$Type extends MessageType<JabberHandshakeReject> {
     constructor() {
-        super("JabberHandshakeReject", [
-            { no: 3, name: "me", kind: "message", T: () => JabberIdentify },
-            { no: 4, name: "public_key", kind: "scalar", T: 12 /*ScalarType.BYTES*/ }
-        ]);
+        super("JabberHandshakeReject", []);
     }
     create(value?: PartialMessage<JabberHandshakeReject>): JabberHandshakeReject {
         const message = globalThis.Object.create((this.messagePrototype!));
-        message.publicKey = new Uint8Array(0);
         if (value !== undefined)
             reflectionMergePartial<JabberHandshakeReject>(this, message, value);
         return message;
@@ -291,12 +293,6 @@ class JabberHandshakeReject$Type extends MessageType<JabberHandshakeReject> {
         while (reader.pos < end) {
             let [fieldNo, wireType] = reader.tag();
             switch (fieldNo) {
-                case /* JabberIdentify me */ 3:
-                    message.me = JabberIdentify.internalBinaryRead(reader, reader.uint32(), options, message.me);
-                    break;
-                case /* bytes public_key */ 4:
-                    message.publicKey = reader.bytes();
-                    break;
                 default:
                     let u = options.readUnknownField;
                     if (u === "throw")
@@ -309,12 +305,6 @@ class JabberHandshakeReject$Type extends MessageType<JabberHandshakeReject> {
         return message;
     }
     internalBinaryWrite(message: JabberHandshakeReject, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
-        /* JabberIdentify me = 3; */
-        if (message.me)
-            JabberIdentify.internalBinaryWrite(message.me, writer.tag(3, WireType.LengthDelimited).fork(), options).join();
-        /* bytes public_key = 4; */
-        if (message.publicKey.length)
-            writer.tag(4, WireType.LengthDelimited).bytes(message.publicKey);
         let u = options.writeUnknownFields;
         if (u !== false)
             (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);

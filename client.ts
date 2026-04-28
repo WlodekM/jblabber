@@ -9,9 +9,81 @@ import * as jabber_protocol from './jabber_protocol.ts';
 import * as blabber_protocol from './blabber_protocol.ts';
 import { MessageType } from "@protobuf-ts/runtime";
 import { Buffer } from 'node:buffer';
+import path from "node:path";
+import * as uuid from 'uuid';
 
 const te = new TextEncoder()
-const PACKET_SIGNATURE = te.encode('JABR');
+const RSA_PACKET_SIGNATURE = te.encode('JBRrsa');
+
+class RSAData {
+	static encrypt_public(key: crypto.KeyObject, buffer: Uint8Array): Uint8Array {
+		if (!key.asymmetricKeyDetails)
+			throw new Error('key not asymmetric');
+		// console.log(key.asymmetricKeyDetails.modulusLength, crypto.constants.RSA_PKCS1_OAEP_PADDING)
+		if (key.asymmetricKeyDetails.modulusLength === undefined)
+			throw new Error('key.asymmetricKeyDetails.modulusLength is undefined');
+		const chunk_size = (214); //  - crypto.constants.RSA_PKCS1_OAEP_PADDING
+
+		const data: (Uint8Array | number[] | number)[] = [RSA_PACKET_SIGNATURE];
+		data.push(0);
+		data.push(buffer.length & 0xFF);
+		data.push((buffer.length & 0xFF00) >> 8);
+		let pointer = 0;
+		while (pointer < buffer.length) {
+			let slice = buffer.subarray(pointer, pointer + chunk_size);
+			(data[1] as number)++;
+			pointer += slice.length
+			if(slice.length < chunk_size) {
+				slice = new Uint8Array([...slice, ...new Array(chunk_size-slice.length).fill(0)])
+			}
+			// console.log(slice, slice.length, chunk_size)
+			const ciphertext = crypto.publicEncrypt(key, slice);
+			const ui8aciphertext = Jabber.buffer_to_uint8array(ciphertext);
+			// console.log('length', ui8aciphertext.length, ui8aciphertext.length && 0xFF, (ui8aciphertext.length && 0x00FF) >> 8)
+			data.push(ui8aciphertext.length & 0xFF)
+			data.push((ui8aciphertext.length & 0xFF00) >> 8)
+			data.push(ui8aciphertext)
+		}
+		return new Uint8Array(data.reduce<number[]>((p, c) => [...p, ...(typeof c === 'number' ? [c] : c)], []))
+		// const uh = crypto.createPublicKey(key);
+		// uh
+		// key.asymmetricKeyDetails
+		
+		// crypto.publicEncrypt()
+	}
+	static decrypt_private(key: crypto.KeyObject, buffer: Uint8Array): Uint8Array {
+		// console.log(buffer)
+		if (compareuint8arrays(buffer.subarray(0, RSA_PACKET_SIGNATURE.length-1), RSA_PACKET_SIGNATURE))
+			throw 'no rsa packet';
+		let pointer = RSA_PACKET_SIGNATURE.length;
+		let remaining_chunks = buffer[pointer++];
+		const cleartext_len_low = buffer[pointer++];
+		const cleartext_len_high = buffer[pointer++];
+		const cleartext_length = cleartext_len_low | (cleartext_len_high << 8);
+		const cleartext_data = new Uint8Array(cleartext_length);
+		let cleartext_pointer = 0;
+		while (remaining_chunks) {
+			const size_low = buffer[pointer++];
+			const size_high = buffer[pointer++];
+			const size = size_low | (size_high << 8);
+			// console.log(size, size_high, size_low);
+			const ciphertext = new Uint8Array(size);
+			
+			for (let i = 0; i < size; i++) {
+				ciphertext[i] = buffer[pointer++];
+			}
+			
+			// console.log(key.asymmetricKeyDetails, key.asymmetricKeyType, key.type)
+			console.log(Buffer.from(ciphertext), ciphertext.at(-1)!.toString(16))
+			const cleartext = Jabber.buffer_to_uint8array(crypto.privateDecrypt(key, ciphertext));
+			// console.log('cleartext', cleartext, cleartext_pointer, '/', cleartext_data.length)
+			cleartext_data.set(cleartext.subarray(0, Math.min(cleartext.length, cleartext_length - cleartext_pointer)), cleartext_pointer);
+			cleartext_pointer += cleartext.length;
+			remaining_chunks--;
+		}
+		return cleartext_data
+	}
+}
 
 export declare interface BlabberClient {
 	on(event: 'open', listener: () => void): this;
@@ -81,14 +153,14 @@ export class BlabberClient extends EventEmitter {
 		this.socket.send(packet.serialize())
 	}
 	send_to(data: Uint8Array, to: number) {
-		console.log('send', data, 'to', to)
+		// console.log('send', data, 'to', to)
 		this.send_packet(BlabberPacketType.DataSendPacket, {
 			data,
 			to
 		} as blabber_protocol.DataSendPacket)
 	}
 	announce(data: Uint8Array) {
-		console.log('announce', data)
+		// console.log('announce', data)
 		this.send_packet(BlabberPacketType.DataAnnouncePacket, {
 			data
 		} as blabber_protocol.DataAnnouncePacket)
@@ -125,7 +197,7 @@ export class JabberPacket<K extends keyof JabberPacketDataMap> {
 	message_class: MessageType<JabberPacketDataMap[K]>;
 	constructor(kind: K, from?: Uint8Array) {
 		if (!(kind in packet_map))
-			throw 'invalid packet kind';
+			throw new Error('invalid packet kind');
 		this.kind = kind;
 		this.message_class = packet_map[kind];
 		if (from)
@@ -147,12 +219,19 @@ export class JabberPacket<K extends keyof JabberPacketDataMap> {
 	}
 }
 
+interface Message {
+	author: string;
+	contents: string;
+	date: number
+}
+
 interface Contact {
 	username: string;
 	key_hash: Uint8Array;
 	key?: crypto.KeyObject;
 	client_id: number;
 	handshake_complete: boolean;
+	messages: Message[];
 }
 
 function compareuint8arrays(arr1: Uint8Array, arr2: Uint8Array) {
@@ -162,11 +241,33 @@ function compareuint8arrays(arr1: Uint8Array, arr2: Uint8Array) {
 }
 
 /** jabber - the e2ee/chat protocol part of jblabber */
-class Jabber extends EventEmitter {
+export declare interface Jabber {
+	// this.emit('packet', packet, from);
+	// this.emit('packet@'+from, packet);
+	// this.emit('packet$'+packet?.kind, packet, from);
+	// this.emit('packet$'+packet?.kind+'@'+from, packet);
+	//////////////
+	// on(event: 'open', listener: () => void): this;
+	// on(event: 'close', listener: () => void): this;
+	// on(event: 'error', listener: () => void): this;
+	// on<T extends keyof JabberPacketDataMap>(event: T, listener: (packet: JabberPacket<T>) => void): this;
+	on(event: 'packet', listener: (packet: JabberPacket<JabberPacketType>, from: number) => void): this;
+	on<U extends number>(event: `packet@${U}`, listener: (packet: JabberPacket<JabberPacketType>) => void): this;
+	on<T extends keyof JabberPacketDataMap>(event: `packet$${T}`, listener: (packet: JabberPacket<T>, from: number) => void): this;
+	on<T extends keyof JabberPacketDataMap,U extends number>(event: `packet$${T}@${U}`, listener: (packet: JabberPacket<T>) => void): this;
+	// on(event: 'contact_list_change', listener: () => void): this;
+	on(event: 'new_contact', listener: (contact: Contact) => void): this;
+	on(event: 'handshake_complete', listener: (contact: Contact) => void): this;
+	// on(event: `packet@${number}`, listener: (data: Uint8Array) => void): this;
+	// on(event: 'data_receive', listener: (data: Uint8Array, from: number) => void): this;
+}
+export class Jabber extends EventEmitter {
 	static buffer_to_uint8array(data: Buffer) {
 		//@ts-ignore:
 		return new Uint8Array(data)
 	}
+	te = new TextEncoder()
+	td = new TextDecoder()
 	blabber: BlabberClient;
 	// handle_poke() {}
 	username: string;
@@ -228,87 +329,150 @@ class Jabber extends EventEmitter {
 		this.private_key = private_key;
 		this.blabber = new BlabberClient(new WebSocket(url));
 		this.blabber.on('open', () => {
-			console.log('open')
-			this.blabber.announce(this.get_identify_packet().serialize())
+			// console.log('open')
+			const identify_packet = this.get_identify_packet();
+			identify_packet.protobuf_message.new = true;
+			this.blabber.announce(identify_packet.serialize())
 		})
 		this.blabber.on('data_receive', (data, from) => {
-			console.log('a')
-			fs.writeFileSync('packet', data)
+			// console.log('a')
+			// fs.writeFileSync('packet', data)
 			const packet = JabberPacket.deserialize(data);
-			console.log('packet', data, packet?.protobuf_message)
+			// console.log('packet', data, packet?.protobuf_message)
 			if (!packet)
 				return;
 			this.emit('packet', packet, from);
 			this.emit('packet@'+from, packet);
 			this.emit('packet$'+packet?.kind, packet, from);
 			this.emit('packet$'+packet?.kind+'@'+from, packet);
-			if (packet.kind == JabberPacketType.JabberIdentify) {
-				const identify_packet = packet as JabberPacket<JabberPacketType.JabberIdentify>;
-				console.log('identity', identify_packet.protobuf_message)
-				if (!this.username_valid(identify_packet.protobuf_message.username))
+		})
+		this.on(`packet$${JabberPacketType.JabberIdentify}`, (packet, from) => {
+			const identify_packet = packet as JabberPacket<JabberPacketType.JabberIdentify>;
+			// console.log('identity', identify_packet.protobuf_message)
+			if (!this.username_valid(identify_packet.protobuf_message.username))
+				return this.blabber.send_to(new JabberPacket(JabberPacketType.JabberHandshakeReject).serialize(), from);
+			const identifier = `${identify_packet.protobuf_message.username}$${[...identify_packet.protobuf_message.hash].map(i => i.toString(16)).join('')}`
+			if (packet.protobuf_message.new) {
+				this.blabber.send_to(this.get_identify_packet().serialize(), from);
+			}
+			if (this.contact_list.has(identifier)) {
+				console.warn('alredy ther')
+				if (this.contact_list.get(identifier)!.client_id === -1) {
+					if (!compareuint8arrays(
+						this.contact_list.get(identifier)!.key_hash,
+						identify_packet.protobuf_message.hash))
+						return console.warn('key hash missmatch', this.contact_list.get(identifier)!.key_hash, identify_packet.protobuf_message.hash);
+					if (this.contact_list.get(identifier)!.username !==
+						identify_packet.protobuf_message.username)
+						return console.warn('username missmatch');
+					this.contact_list.get(identifier)!.client_id = from;
+				}
+				return
+			}
+			this.contact_list.set(identifier, {
+				client_id: from,
+				handshake_complete: false,
+				key_hash: identify_packet.protobuf_message.hash,
+				username: identify_packet.protobuf_message.username,
+				messages: []
+			})
+			this.emit('new_contact', this.contact_list.get(identifier))
+		});
+		this.on(`packet$${JabberPacketType.JabberHello}`, (packet, from) => {
+			const hello_packet = packet as JabberPacket<JabberPacketType.JabberHello>;
+			const identity_known = this.contact_list.values().find(contact => contact.client_id === from);
+			// console.log('hello', hello_packet.protobuf_message)
+			let contact: Contact;
+			if (!identity_known) {
+				if (!hello_packet.protobuf_message.me) {
+					console.warn('no me')
 					return this.blabber.send_to(new JabberPacket(JabberPacketType.JabberHandshakeReject).serialize(), from);
-				const identifier = `${identify_packet.protobuf_message.username}$${[...identify_packet.protobuf_message.hash].map(i => i.toString(16)).join('')}`
-				if (this.contact_list.has(identifier))
-					return;
-				this.contact_list.set(identifier, {
+				}
+				if (!this.username_valid(hello_packet.protobuf_message.me.username)) {
+					console.warn('invlaid username')
+					return this.blabber.send_to(new JabberPacket(JabberPacketType.JabberHandshakeReject).serialize(), from);
+				}
+				const identify_packet = hello_packet.protobuf_message.me;
+				const identifier = `${identify_packet.username}$${Buffer.from(identify_packet.hash).toString('hex')}`
+				if (this.contact_list.has(identifier)) {
+					if (this.contact_list.get(identifier)!.client_id === -1) {
+						if (!compareuint8arrays(
+							this.contact_list.get(identifier)!.key_hash,
+							hello_packet.protobuf_message.me.hash))
+							return;
+						if (this.contact_list.get(identifier)!.username !==
+							hello_packet.protobuf_message.me.username)
+							return;
+						this.contact_list.get(identifier)!.client_id = from;
+					}
+					if (this.contact_list.get(identifier)!.client_id !== from)
+						return;
+					throw new Error('invalid state')
+				}
+				contact = {
 					client_id: from,
 					handshake_complete: false,
-					key_hash: identify_packet.protobuf_message.hash,
-					username: identify_packet.protobuf_message.username,
-				})
-			} else if (packet.kind == JabberPacketType.JabberHello) {
-				const hello_packet = packet as JabberPacket<JabberPacketType.JabberHello>;
-				const identity_known = this.contact_list.values().find(contact => contact.client_id === from);
-				console.log('hello', hello_packet.protobuf_message)
-				let contact: Contact;
-				if (!identity_known) {
-					if (!hello_packet.protobuf_message.me)
+					key_hash: identify_packet.hash,
+					username: identify_packet.username,
+					messages: []
+				};
+				this.contact_list.set(identifier, contact)
+				this.emit('new_contact', contact);
+			} else {
+				contact = identity_known;
+				if (hello_packet.protobuf_message.me) {
+					if (!compareuint8arrays(contact.key_hash, hello_packet.protobuf_message.me.hash)) {
+						console.warn('hashes dont match', contact.key_hash, hello_packet.protobuf_message.me.hash)
 						return this.blabber.send_to(new JabberPacket(JabberPacketType.JabberHandshakeReject).serialize(), from);
-					if (!this.username_valid(hello_packet.protobuf_message.me.username))
-						return this.blabber.send_to(new JabberPacket(JabberPacketType.JabberHandshakeReject).serialize(), from);
-					const identify_packet = hello_packet.protobuf_message.me;
-					const identifier = `${identify_packet.username}$${[...identify_packet.hash].map(i => i.toString(16)).join('')}`
-					if (this.contact_list.has(identifier)) {
-						if (this.contact_list.get(identifier)!.client_id !== from)
-							return;
-						throw new Error('invalid state')
 					}
-					contact = {
-						client_id: from,
-						handshake_complete: false,
-						key_hash: identify_packet.hash,
-						username: identify_packet.username,
-					};
-					this.contact_list.set(identifier, contact)
-				} else {
-					contact = identity_known;
-					if (hello_packet.protobuf_message.me) {
-						if (compareuint8arrays(contact.key_hash, hello_packet.protobuf_message.me.hash))
-							return this.blabber.send_to(new JabberPacket(JabberPacketType.JabberHandshakeReject).serialize(), from);
-						if (contact.username !== hello_packet.protobuf_message.me.username)
-							return this.blabber.send_to(new JabberPacket(JabberPacketType.JabberHandshakeReject).serialize(), from);
-						const hash = crypto.hash('sha512', hello_packet.protobuf_message.publicKey, 'buffer');
-						if (compareuint8arrays(contact.key_hash, Jabber.buffer_to_uint8array(hash)))
-							return this.blabber.send_to(new JabberPacket(JabberPacketType.JabberHandshakeReject).serialize(), from);
+					if (contact.username !== hello_packet.protobuf_message.me.username) {
+						console.warn('usernames dont match')
+						return this.blabber.send_to(new JabberPacket(JabberPacketType.JabberHandshakeReject).serialize(), from);
+					}
+					const hash = crypto.hash('sha512', hello_packet.protobuf_message.publicKey, 'buffer');
+					if (!compareuint8arrays(contact.key_hash, Jabber.buffer_to_uint8array(hash))) {
+						console.warn('key doesnt match hash')
+						return this.blabber.send_to(new JabberPacket(JabberPacketType.JabberHandshakeReject).serialize(), from);
 					}
 				}
-				if (contact.handshake_complete)
-					return;
-				const public_key = crypto.createPublicKey({
-					key: Buffer.from(hello_packet.protobuf_message.publicKey),
-					format: 'der',
-					type: 'spki'
-				});
-				// console.log(public_key)
-				contact.key = public_key;
-				const response = new JabberPacket(JabberPacketType.JabberHelloResponse);
-				response.protobuf_message.encryptedPublicKey =
-					Jabber.buffer_to_uint8array(
-						crypto.publicEncrypt(public_key, this.public_key.export({format: 'der', type: 'spki'}))
-					);
-				response.protobuf_message.me = this.get_identify_packet().protobuf_message;
-				this.blabber.send_to(response.serialize(), from);
 			}
+			if (contact.handshake_complete)
+				return;
+			const public_key = crypto.createPublicKey({
+				key: Buffer.from(hello_packet.protobuf_message.publicKey),
+				format: 'der',
+				type: 'spki',
+			}) as crypto.KeyObject;
+			if (public_key.asymmetricKeyType !== 'rsa')
+				throw new Error('key not rsa')
+			// console.log(public_key)
+			contact.key = public_key;
+			const response = new JabberPacket(JabberPacketType.JabberHelloResponse);
+			const cleartext_key = this.public_key.export({format: 'der', type: 'spki'});
+			// console.log(cleartext_key)
+			const encrypted_key =
+				RSAData.encrypt_public(
+					public_key,
+					Jabber.buffer_to_uint8array(cleartext_key)
+				);
+			// fs.writeFileSync('encrypted_key', encrypted_key)
+			// console.log('encrypted_key', encrypted_key)
+			response.protobuf_message.encryptedPublicKey = encrypted_key
+			response.protobuf_message.me = this.get_identify_packet().protobuf_message;
+			this.blabber.send_to(response.serialize(), from);
+			console.log('completed handshake with', contact.username)
+			contact.handshake_complete = true;
+			this.emit('handshake_complete', contact)
+		})
+		this.on(`packet$${JabberPacketType.JabberMessagePacket}`, (packet, from) => {
+			const contact = this.contact_list.values().find(contact => contact.client_id === from);
+			if (!contact) return console.warn('warning', 'message from unknown contact', from);
+			if (!contact.handshake_complete) return console.warn('warning', 'handshake incomplete, wont receive message from', contact.username);
+			const ciphertext = packet.protobuf_message.encryptedMessage;
+			console.log(ciphertext, crypto.hash('sha256', ciphertext))
+			// fs.writeFileSync('whatisithiswhat', ciphertext)
+			const cleartext = RSAData.decrypt_private(this.private_key, ciphertext);
+			console.log('from', contact.username, ':', this.td.decode(cleartext))
 		})
 	}
 	get_identify_packet(): JabberPacket<JabberPacketType.JabberIdentify> {
@@ -316,7 +480,7 @@ class Jabber extends EventEmitter {
 		identify_packet.protobuf_message.username = this.username;
 		const hash = crypto.hash('sha512', this.public_key.export({format: 'der', type: 'spki'}), 'buffer')
 		identify_packet.protobuf_message.hash = Jabber.buffer_to_uint8array(hash);
-		console.log(identify_packet.protobuf_message, identify_packet.serialize())
+		// console.log(identify_packet.protobuf_message, identify_packet.serialize())
 		return identify_packet;
 	}
 	async initiate_handshake(contact: Contact) {
@@ -328,10 +492,28 @@ class Jabber extends EventEmitter {
 		this.blabber.send_to(hello_packet.serialize(), contact.client_id);
 		const response = await this.wait_for_packet_from(contact.client_id, JabberPacketType.JabberHelloResponse || JabberPacketType.JabberHandshakeReject);
 		if (response.kind === JabberPacketType.JabberHandshakeReject)
-			throw 'handshake rejected';
+			throw new Error('handshake rejected');
 		const good_response = response as JabberPacket<JabberPacketType.JabberHelloResponse>;
 		const encrypted_key = good_response.protobuf_message.encryptedPublicKey;
-		contact.key = crypto.createPublicKey(crypto.privateDecrypt(this.private_key, encrypted_key))
+		const raw_key = Buffer.from(RSAData.decrypt_private(this.private_key, encrypted_key));
+		contact.key = crypto.createPublicKey({
+			format: 'der',
+			key: raw_key,
+			type: 'spki'
+		})
+		contact.handshake_complete = true;
+		this.emit('handshake_complete', contact)
+	}
+	send_message_to(contact: Contact, message: Uint8Array | string) {
+		if (!contact.handshake_complete)
+			throw 'handshake not complete';
+		if (typeof message === 'string')
+			message = this.te.encode(message);
+		const ciphertext = RSAData.encrypt_public(contact.key!, message);
+		const packet = new JabberPacket(JabberPacketType.JabberMessagePacket);
+		console.log(ciphertext, crypto.hash('sha256', ciphertext))
+		packet.protobuf_message.encryptedMessage = ciphertext;
+		this.blabber.send_to(packet.serialize(), contact.client_id);
 	}
 }
 
@@ -354,13 +536,17 @@ const rl_interface = rl.createInterface(
 
 if (!fs.existsSync('profile'))
 	fs.mkdirSync('profile');
+if (!fs.existsSync('profile/contacts'))
+	fs.mkdirSync('profile/contacts');
+if (!fs.existsSync('profile/contacts.json'))
+	fs.writeFileSync('profile/contacts.json', '{}');
 if (!fs.existsSync('profile/pub_key') ||
 	!fs.existsSync('profile/priv_key')
 ) {
 	console.log('keys not found, creating new key pair')
 	// KeyPairExportOptions<"spki", "pkcs8">
 	const key_pair = crypto.generateKeyPairSync('rsa', {
-		modulusLength: 512
+		modulusLength: 2048
 	});
 	console.log(crypto.publicEncrypt(key_pair.publicKey, 'test'));
 	if (fs.existsSync('profile/pub_key'))
@@ -374,9 +560,9 @@ if (!fs.existsSync('profile/username')) {
 	console.log('username not found, enter username')
 	const username = await rl_interface.question('?');
 	if (!username)
-		throw 'you have to enter a username, bud'
+		throw new Error('you have to enter a username, bud');
 	if (!Jabber.prototype.username_valid(username))
-		throw 'look, i know the protocol does not restrict usernames but please dont do that';
+		throw new Error('invalid username');
 	fs.writeFileSync('profile/username', username);
 }
 
@@ -393,45 +579,69 @@ if (
 	process.exit(1)
 }
 
-// const a = /*Jabber.buffer_to_uint8array*/(public_key.export({format: 'der', type: 'spki'}));
-// const aa = /*Buffer.from*/(a);
-// console.log(a, aa)
-// const b = crypto.createPublicKey({
-// 	key: aa,
-// 	format: 'der',
-// 	type: 'spki'
-// });
-// console.log(b.asymmetricKeyType)
-// console.log(crypto.publicEncrypt(public_key, 'meow'))
-// console.log(crypto.publicEncrypt(b, 'meow'))
-
-// process.exit(0)
 const username = fs.readFileSync('profile/username').toString()
 
+// const contact_db: Record<string,string> = JSON.parse(fs.readFileSync('profile/contacts.json').toString())
 const jabber = new Jabber('ws://localhost:2137', username, public_key, private_key);
+
+// function sync_db() {
+// 	fs.writeFileSync('profile/contacts.json', JSON.stringify(contact_db));
+// }
+
+// jabber.on('new_contact', contact => {
+// 	const this_uuid = uuid.v4();
+// 	const identifier = `${contact.username}$${Buffer.from(contact.key_hash).toString('hex')}`;
+// 	contact_db[identifier] = this_uuid;
+// 	const contact_dir = path.join('profile/contacts', this_uuid)
+// 	if (fs.existsSync(contact_dir))
+// 		fs.rmSync(contact_dir, {recursive:true});
+// 	fs.mkdirSync(contact_dir);
+// 	// fs.writeFileSync(path.join(contact_dir, 'pub_key_hash'), contact.key_hash)
+// 	fs.writeFileSync(path.join(contact_dir, 'messages.json'), '[]');
+// 	sync_db();
+// })
+// jabber.on('handshake_complete', contact => {
+// 	const identifier = `${contact.username}$${Buffer.from(contact.key_hash).toString('hex')}`;
+// 	const this_uuid = contact_db[identifier];
+// 	if (!this_uuid)
+// 		throw 'uhhhhhh'
+// 	const contact_dir = path.join('profile/contacts', this_uuid)
+// 	if (!fs.existsSync(contact_dir))
+// 		throw 'invalid state: contact dir does not exist';
+// 	fs.writeFileSync(path.join(contact_dir, 'pub_key'), contact.key!.export({
+// 		format: 'pem',
+// 		type: 'spki'
+// 	}))
+// })
 
 attachEELogger(jabber, 'jabber')
 attachEELogger(jabber.blabber, 'blabber')
 
-// const ws = new WebSocket('ws://localhost:2137')
-// ws.addEventListener('message', async (event) => {
-// 	if (typeof event.data === 'string')
-// 		console.log(String(event.data))
-// 	else {
-// 		const bytes = await (event.data as Blob).bytes();
-// 		const packet = BlabberPacket.deserialize(bytes);
-// 		console.log(packet.kind, packet.message_class.typeName, packet.protobuf_message)
-// 	}
-// })
-// ws.addEventListener('open', (event) => {
-// 	console.log('open')
-// })
-// ws.addEventListener('close', (event) => {
-// 	console.log(`close ${event.code}`)
-// })
-// ws.addEventListener('error', (event) => {
-// 	console.log('error')
-// })
+// const fs_contacts = fs.readdirSync('profile/contacts');
+
+// for (const identifier in contact_db) {
+// 	if (!Object.hasOwn(contact_db, identifier)) continue;
+// 	const contact_uuid = contact_db[identifier];
+// 	const [username, key_hash_string] = identifier.split('$')
+// 	console.log(key_hash_string, identifier)
+// 	const key_hash = Jabber.buffer_to_uint8array(Buffer.from(key_hash_string, 'hex'));
+// 	const key = fs.existsSync(path.join('profile/contacts', contact_uuid, 'pub_key')) ?
+// 		fs.readFileSync(path.join('profile/contacts', contact_uuid, 'pub_key')) :
+// 		null;
+// 	const messages = JSON.parse(fs.readFileSync(path.join('profile/contacts', contact_uuid, 'messages.json')).toString());
+// 	jabber.contact_list.set(identifier, {
+// 		username,
+// 		client_id: -1,
+// 		handshake_complete: key !== null,
+// 		key_hash,
+// 		messages,
+// 		key: key ? crypto.createPublicKey({
+// 			format: 'pem',
+// 			type: 'spki',
+// 			key
+// 		}) : undefined
+// 	});
+// }
 
 rl_interface.on('SIGINT', () => {
 	process.exit(0)
@@ -449,12 +659,33 @@ while (true) {
 		console.log(jabber.contact_list)
 		continue
 	} else if (command === '/handshake') {
-		const contact = jabber.contact_list.get(args[0]);
+		let contact = jabber.contact_list.get(args[0]);
+		if (!contact) {
+			const contacts = jabber.contact_list.keys().filter(k => k.includes(args[0])).toArray()
+			if (contacts.length === 1) {
+				contact = jabber.contact_list.get(contacts[0]);
+			}
+		}
 		if (!contact) {
 			console.error('not found')
 			continue
 		}
 		await jabber.initiate_handshake(contact)
+		console.log('ok')
+		continue;
+	} else if (command === '/msg') {
+		let contact = jabber.contact_list.get(args[0]);
+		if (!contact) {
+			const contacts = jabber.contact_list.keys().filter(k => k.includes(args[0])).toArray()
+			if (contacts.length === 1) {
+				contact = jabber.contact_list.get(contacts[0]);
+			}
+		}
+		if (!contact) {
+			console.error('not found')
+			continue
+		}
+		jabber.send_message_to(contact, args.slice(1).join(' '));
 		console.log('ok')
 		continue;
 	}

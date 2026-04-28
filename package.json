@@ -6,10 +6,11 @@
     "@types/ws": "^8.18.1",
     "google-protobuf": "^4.0.2",
     "typescript": "^6.0.3",
+    "uuid": "^14.0.0",
     "ws": "^8.20.0"
   },
   "scripts": {
-    "gen-proto": "npx protoc --ts_out . --proto_path . blabber_protocol.proto"
+    "gen-proto": "npx protoc --ts_out . --proto_path . blabber_protocol.proto jabber_protocol.proto"
   },
   "type": "module"
 }
