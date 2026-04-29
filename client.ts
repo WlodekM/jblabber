@@ -6,7 +6,7 @@ import path from "node:path";
 import crypto from 'node:crypto';
 import { Buffer } from 'node:buffer';
 import { EventEmitter } from 'node:events';
-import { Jabber } from './jabber.ts';
+import { Jabber, Message } from './jabber.ts';
 
 function attachEELogger(ee:EventEmitter, label?: string) {
 	const emit = ee.emit;
@@ -101,6 +101,25 @@ jabber.on('handshake_complete', contact => {
 		format: 'pem',
 		type: 'spki'
 	}))
+})
+jabber.on('message_received', (message, contact) => {
+	const contents = jabber.td.decode(message);
+	const message_object: Message = {
+		contents,
+		author: contact.username,
+		date: Date.now()
+	};
+	console.log(`${contact.username}: ${contents}`);
+	const identifier = `${contact.username}$${Buffer.from(contact.key_hash).toString('hex')}`;
+	const this_uuid = contact_db[identifier];
+	if (!this_uuid)
+		throw 'uhhhhhh'
+	const contact_dir = path.join('profile/contacts', this_uuid)
+	if (!fs.existsSync(contact_dir))
+		throw 'invalid state: contact dir does not exist';
+	const messages = JSON.parse(fs.readFileSync(path.join(contact_dir, 'messages.json')).toString());
+	messages.push(message_object);
+	fs.writeFileSync(path.join(contact_dir, 'messages.json'), JSON.stringify(messages));
 })
 
 if (process.argv.includes('-d')) {

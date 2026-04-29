@@ -10,7 +10,7 @@ import { Buffer } from 'node:buffer';
 const te = new TextEncoder()
 const RSA_PACKET_SIGNATURE = te.encode('JBRrsa');
 
-class RSAData {
+export class RSAData {
 	static encrypt_public(key: crypto.KeyObject, buffer: Uint8Array): Uint8Array {
 		if (!key.asymmetricKeyDetails)
 			throw new Error('key not asymmetric');
@@ -214,13 +214,13 @@ export class JabberPacket<K extends keyof JabberPacketDataMap> {
 	}
 }
 
-interface Message {
+export interface Message {
 	author: string;
 	contents: string;
 	date: number
 }
 
-interface Contact {
+export interface Contact {
 	username: string;
 	key_hash: Uint8Array;
 	key?: crypto.KeyObject;
@@ -253,6 +253,7 @@ export declare interface Jabber {
 	// on(event: 'contact_list_change', listener: () => void): this;
 	on(event: 'new_contact', listener: (contact: Contact) => void): this;
 	on(event: 'handshake_complete', listener: (contact: Contact) => void): this;
+	on(event: 'message_received', listener: (message: Uint8Array, contact: Contact) => void): this;
 	// on(event: `packet@${number}`, listener: (data: Uint8Array) => void): this;
 	// on(event: 'data_receive', listener: (data: Uint8Array, from: number) => void): this;
 }
@@ -467,7 +468,7 @@ export class Jabber extends EventEmitter {
 			// console.log(ciphertext, crypto.hash('sha256', ciphertext))
 			// fs.writeFileSync('whatisithiswhat', ciphertext)
 			const cleartext = RSAData.decrypt_private(this.private_key, ciphertext);
-			console.log('from', contact.username, ':', this.td.decode(cleartext))
+			this.emit('message_received', cleartext, contact);
 		})
 	}
 	get_identify_packet(): JabberPacket<JabberPacketType.JabberIdentify> {
