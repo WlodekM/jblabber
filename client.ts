@@ -74,7 +74,7 @@ class RSAData {
 			}
 			
 			// console.log(key.asymmetricKeyDetails, key.asymmetricKeyType, key.type)
-			console.log(Buffer.from(ciphertext), ciphertext.at(-1)!.toString(16))
+			// console.log(Buffer.from(ciphertext), ciphertext.at(-1)!.toString(16))
 			const cleartext = Jabber.buffer_to_uint8array(crypto.privateDecrypt(key, ciphertext));
 			// console.log('cleartext', cleartext, cleartext_pointer, '/', cleartext_data.length)
 			cleartext_data.set(cleartext.subarray(0, Math.min(cleartext.length, cleartext_length - cleartext_pointer)), cleartext_pointer);
@@ -351,12 +351,12 @@ export class Jabber extends EventEmitter {
 			// console.log('identity', identify_packet.protobuf_message)
 			if (!this.username_valid(identify_packet.protobuf_message.username))
 				return this.blabber.send_to(new JabberPacket(JabberPacketType.JabberHandshakeReject).serialize(), from);
-			const identifier = `${identify_packet.protobuf_message.username}$${[...identify_packet.protobuf_message.hash].map(i => i.toString(16)).join('')}`
+			const identifier = `${identify_packet.protobuf_message.username}$${Buffer.from(identify_packet.protobuf_message.hash).toString('hex')}`
 			if (packet.protobuf_message.new) {
 				this.blabber.send_to(this.get_identify_packet().serialize(), from);
 			}
 			if (this.contact_list.has(identifier)) {
-				console.warn('alredy ther')
+				// console.warn('alredy ther')
 				if (this.contact_list.get(identifier)!.client_id === -1) {
 					if (!compareuint8arrays(
 						this.contact_list.get(identifier)!.key_hash,
@@ -469,7 +469,7 @@ export class Jabber extends EventEmitter {
 			if (!contact) return console.warn('warning', 'message from unknown contact', from);
 			if (!contact.handshake_complete) return console.warn('warning', 'handshake incomplete, wont receive message from', contact.username);
 			const ciphertext = packet.protobuf_message.encryptedMessage;
-			console.log(ciphertext, crypto.hash('sha256', ciphertext))
+			// console.log(ciphertext, crypto.hash('sha256', ciphertext))
 			// fs.writeFileSync('whatisithiswhat', ciphertext)
 			const cleartext = RSAData.decrypt_private(this.private_key, ciphertext);
 			console.log('from', contact.username, ':', this.td.decode(cleartext))
@@ -511,7 +511,7 @@ export class Jabber extends EventEmitter {
 			message = this.te.encode(message);
 		const ciphertext = RSAData.encrypt_public(contact.key!, message);
 		const packet = new JabberPacket(JabberPacketType.JabberMessagePacket);
-		console.log(ciphertext, crypto.hash('sha256', ciphertext))
+		// console.log(ciphertext, crypto.hash('sha256', ciphertext))
 		packet.protobuf_message.encryptedMessage = ciphertext;
 		this.blabber.send_to(packet.serialize(), contact.client_id);
 	}
@@ -581,67 +581,69 @@ if (
 
 const username = fs.readFileSync('profile/username').toString()
 
-// const contact_db: Record<string,string> = JSON.parse(fs.readFileSync('profile/contacts.json').toString())
+const contact_db: Record<string,string> = JSON.parse(fs.readFileSync('profile/contacts.json').toString())
 const jabber = new Jabber('ws://localhost:2137', username, public_key, private_key);
 
-// function sync_db() {
-// 	fs.writeFileSync('profile/contacts.json', JSON.stringify(contact_db));
-// }
+function sync_db() {
+	fs.writeFileSync('profile/contacts.json', JSON.stringify(contact_db));
+}
 
-// jabber.on('new_contact', contact => {
-// 	const this_uuid = uuid.v4();
-// 	const identifier = `${contact.username}$${Buffer.from(contact.key_hash).toString('hex')}`;
-// 	contact_db[identifier] = this_uuid;
-// 	const contact_dir = path.join('profile/contacts', this_uuid)
-// 	if (fs.existsSync(contact_dir))
-// 		fs.rmSync(contact_dir, {recursive:true});
-// 	fs.mkdirSync(contact_dir);
-// 	// fs.writeFileSync(path.join(contact_dir, 'pub_key_hash'), contact.key_hash)
-// 	fs.writeFileSync(path.join(contact_dir, 'messages.json'), '[]');
-// 	sync_db();
-// })
-// jabber.on('handshake_complete', contact => {
-// 	const identifier = `${contact.username}$${Buffer.from(contact.key_hash).toString('hex')}`;
-// 	const this_uuid = contact_db[identifier];
-// 	if (!this_uuid)
-// 		throw 'uhhhhhh'
-// 	const contact_dir = path.join('profile/contacts', this_uuid)
-// 	if (!fs.existsSync(contact_dir))
-// 		throw 'invalid state: contact dir does not exist';
-// 	fs.writeFileSync(path.join(contact_dir, 'pub_key'), contact.key!.export({
-// 		format: 'pem',
-// 		type: 'spki'
-// 	}))
-// })
+jabber.on('new_contact', contact => {
+	const this_uuid = uuid.v4();
+	const identifier = `${contact.username}$${Buffer.from(contact.key_hash).toString('hex')}`;
+	contact_db[identifier] = this_uuid;
+	const contact_dir = path.join('profile/contacts', this_uuid)
+	if (fs.existsSync(contact_dir))
+		fs.rmSync(contact_dir, {recursive:true});
+	fs.mkdirSync(contact_dir);
+	// fs.writeFileSync(path.join(contact_dir, 'pub_key_hash'), contact.key_hash)
+	fs.writeFileSync(path.join(contact_dir, 'messages.json'), '[]');
+	sync_db();
+})
+jabber.on('handshake_complete', contact => {
+	const identifier = `${contact.username}$${Buffer.from(contact.key_hash).toString('hex')}`;
+	const this_uuid = contact_db[identifier];
+	if (!this_uuid)
+		throw 'uhhhhhh'
+	const contact_dir = path.join('profile/contacts', this_uuid)
+	if (!fs.existsSync(contact_dir))
+		throw 'invalid state: contact dir does not exist';
+	fs.writeFileSync(path.join(contact_dir, 'pub_key'), contact.key!.export({
+		format: 'pem',
+		type: 'spki'
+	}))
+})
 
-attachEELogger(jabber, 'jabber')
-attachEELogger(jabber.blabber, 'blabber')
+if (process.argv.includes('-d')) {
+	attachEELogger(jabber, 'jabber')
+	attachEELogger(jabber.blabber, 'blabber')
+}
 
 // const fs_contacts = fs.readdirSync('profile/contacts');
 
-// for (const identifier in contact_db) {
-// 	if (!Object.hasOwn(contact_db, identifier)) continue;
-// 	const contact_uuid = contact_db[identifier];
-// 	const [username, key_hash_string] = identifier.split('$')
-// 	console.log(key_hash_string, identifier)
-// 	const key_hash = Jabber.buffer_to_uint8array(Buffer.from(key_hash_string, 'hex'));
-// 	const key = fs.existsSync(path.join('profile/contacts', contact_uuid, 'pub_key')) ?
-// 		fs.readFileSync(path.join('profile/contacts', contact_uuid, 'pub_key')) :
-// 		null;
-// 	const messages = JSON.parse(fs.readFileSync(path.join('profile/contacts', contact_uuid, 'messages.json')).toString());
-// 	jabber.contact_list.set(identifier, {
-// 		username,
-// 		client_id: -1,
-// 		handshake_complete: key !== null,
-// 		key_hash,
-// 		messages,
-// 		key: key ? crypto.createPublicKey({
-// 			format: 'pem',
-// 			type: 'spki',
-// 			key
-// 		}) : undefined
-// 	});
-// }
+for (const identifier in contact_db) {
+	if (!Object.hasOwn(contact_db, identifier)) continue;
+	const contact_uuid = contact_db[identifier];
+	const [username, key_hash_string] = identifier.split('$')
+	// console.log(key_hash_string, identifier)
+	const key_hash = Jabber.buffer_to_uint8array(Buffer.from(key_hash_string, 'hex'));
+	const key = fs.existsSync(path.join('profile/contacts', contact_uuid, 'pub_key')) ?
+		fs.readFileSync(path.join('profile/contacts', contact_uuid, 'pub_key')) :
+		null;
+	const messages = JSON.parse(fs.readFileSync(path.join('profile/contacts', contact_uuid, 'messages.json')).toString());
+	jabber.contact_list.set(identifier, {
+		username,
+		client_id: -1,
+		handshake_complete: key !== null,
+		key_hash,
+		messages,
+		key: key ? crypto.createPublicKey({
+			format: 'pem',
+			type: 'spki',
+			key
+		}) : undefined
+	});
+}
 
 rl_interface.on('SIGINT', () => {
 	process.exit(0)
@@ -649,14 +651,18 @@ rl_interface.on('SIGINT', () => {
 rl_interface.on('close', () => process.exit(0));
 while (true) {
 	const input = await rl_interface.question(': ')
-	console.log(JSON.stringify(input))
+	// console.log(JSON.stringify(input))
 	const [command, ...args] = input.split(' ')
 	if (input == null || input == '/exit') {
 		// ws.close();
 		jabber.blabber.socket.close()
 		break
 	} else if (input == '/list') {
-		console.log(jabber.contact_list)
+		console.log(jabber.contact_list.entries().map(([id, contact]) => `\
+${id}
+	username: ${contact.username}
+	key hash: ${Buffer.from(contact.key_hash).toString('hex')}
+	handshake complete? ${contact.handshake_complete ? 'yes' : 'no'}`).toArray().join('\n'))
 		continue
 	} else if (command === '/handshake') {
 		let contact = jabber.contact_list.get(args[0]);
