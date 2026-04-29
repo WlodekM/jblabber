@@ -8,6 +8,20 @@ import { Buffer } from 'node:buffer';
 import { EventEmitter } from 'node:events';
 import { Jabber, Message } from './jabber.ts';
 
+const flags: Record<string, string> = {};
+let i = 0;
+while (i < process.argv.length) {
+	if (process.argv[i].startsWith('--')) {
+		flags[process.argv[i].slice(2)] = process.argv[++i]
+	} else if (process.argv[i].startsWith('-')) {
+		const uh = process.argv[i].slice(1).split('');
+		const value = process.argv[++i];
+		for (const key of uh)
+			flags[key] = value;
+	} else flags._ = process.argv[i]
+	i++
+}
+
 function attachEELogger(ee:EventEmitter, label?: string) {
 	const emit = ee.emit;
 	ee.emit = function name(eventName: string | symbol, ...args: unknown[]) {
@@ -71,7 +85,7 @@ if (
 const username = fs.readFileSync('profile/username').toString()
 
 const contact_db: Record<string,string> = JSON.parse(fs.readFileSync('profile/contacts.json').toString())
-const jabber = new Jabber('ws://localhost:2137', username, public_key, private_key);
+const jabber = new Jabber(flags.a ?? flags.address ?? 'ws://localhost:2137', username, public_key, private_key);
 
 function sync_db() {
 	fs.writeFileSync('profile/contacts.json', JSON.stringify(contact_db));
