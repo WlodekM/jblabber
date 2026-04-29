@@ -1,9 +1,9 @@
-import { WebSocketServer, type WebSocket } from 'ws';
+import type { WebSocketServer, WebSocket } from 'ws';
 import type ws from 'ws';
 import type http from 'http';
 import { Buffer } from 'node:buffer';
 // import protobuf from 'google-protobuf';
-import { MessageType } from "@protobuf-ts/runtime";
+import type { MessageType } from "@protobuf-ts/runtime";
 //@ts-ignore:
 globalThis.global = globalThis;
 import * as protocol from './blabber_protocol.ts';
@@ -209,15 +209,12 @@ export class BlabberServer extends EventEmitter {
 		return id;
 	}
 
-	constructor(port: number = 2137) {
+	constructor(ws: WebSocketServer) {
 		super();
-		this.ws = new WebSocketServer({
-			port,
-			autoPong: true
-		});
+		this.ws = ws;
 		this.ws.on('connection', (...args) => this.on_ws_conenction(...args))
 		this.ws.on('listening', () => {
-			setTimeout(() => this.emit('open', port))
+			setTimeout(() => this.emit('open', ws.options.port))
 		})
 	}
 
