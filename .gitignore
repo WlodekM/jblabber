@@ -2,6 +2,7 @@ keys
 node_modules
 yarn.lock
 blabber_protocol.ts
+jabber_protocol.ts
 profile
 packet
 dist
