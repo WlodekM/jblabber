@@ -1,7 +1,7 @@
 # features
  - [x] message signing
  - [x] ACK
- - [ ] online/offline detection (detect whether contact is online or offline)
+ - [x] online/offline detection (detect whether contact is online or offline)
  - [ ] actual message format
 	* [ ] attachments
 	* [ ] formatting
