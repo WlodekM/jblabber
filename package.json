@@ -12,7 +12,6 @@
   "scripts": {
     "gen-proto": "npx protoc --ts_out . --proto_path . blabber_protocol.proto jabber_protocol.proto"
   },
-  "type": "module",
   "devDependencies": {
     "esbuild": "^0.28.0"
   }

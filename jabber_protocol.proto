@@ -5,7 +5,7 @@ syntax = "proto3";
 message JabberIdentify {
 	string username = 1;
 	bytes hash = 2;
-	optional bool new = 6;
+	optional bool new = 8;
 }
 
 // initiate handshake with jabber user
@@ -55,5 +55,10 @@ all is good
 // message JabberMessage {}
 
 message JabberMessagePacket {
+	bytes signature = 7;
 	bytes encrypted_message = 6;
+}
+message JabberACK {
+	bool ok = 9;
+	bytes signature = 7;
 }

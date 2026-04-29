@@ -1,5 +1,10 @@
 import crypto from 'node:crypto';
-import { BlabberPacket, PacketDataMap, PacketType as BlabberPacketType, PacketType, PacketNameMap } from './blabber.ts';
+import {
+	BlabberPacket,
+	type PacketDataMap,
+	PacketType as BlabberPacketType,
+	type PacketNameMap
+} from './blabber.ts';
 import { EventEmitter } from 'node:events';
 // import * as blabber_protocol from './blabber_protocol.ts';
 import * as jabber_protocol from './jabber_protocol.ts';
@@ -10,47 +15,62 @@ import { Buffer } from 'node:buffer';
 const te = new TextEncoder()
 const RSA_PACKET_SIGNATURE = te.encode('JBRrsa');
 
+/**
+ * RSAData - wrapper for RSA-encrypted data for jabber
+ * format:
+ * enum type {
+ * 	public = 0,
+ * 	private = 1
+ * };
+ * struct chunk {
+ * 	uint16_t length, // length of the ciphertext
+ * 	char[] ciphertext // the ciphertext
+ * }
+ * 'JBRrsa' // magic numbers for RSAData
+ * enum type data_type // type of the key the data was encrypted with
+ * char chunks // number of chunks in the data
+ * uint16_t buff_length // the length of the cleartext
+ * struct chunk chunks[] // the chunks
+ */
 export class RSAData {
-	static encrypt_public(key: crypto.KeyObject, buffer: Uint8Array): Uint8Array {
+	static encrypt(key: crypto.KeyObject, buffer: Uint8Array): Uint8Array {
 		if (!key.asymmetricKeyDetails)
 			throw new Error('key not asymmetric');
-		// console.log(key.asymmetricKeyDetails.modulusLength, crypto.constants.RSA_PKCS1_OAEP_PADDING)
 		if (key.asymmetricKeyDetails.modulusLength === undefined)
 			throw new Error('key.asymmetricKeyDetails.modulusLength is undefined');
-		const chunk_size = (214); //  - crypto.constants.RSA_PKCS1_OAEP_PADDING
+		const chunk_size = (214);
+		const encrypt_func = key.type === 'private' ? crypto.privateEncrypt : crypto.publicEncrypt;
 
 		const data: (Uint8Array | number[] | number)[] = [RSA_PACKET_SIGNATURE];
+		data.push(+(key.type === 'private'));
 		data.push(0);
 		data.push(buffer.length & 0xFF);
 		data.push((buffer.length & 0xFF00) >> 8);
 		let pointer = 0;
 		while (pointer < buffer.length) {
 			let slice = buffer.subarray(pointer, pointer + chunk_size);
-			(data[1] as number)++;
+			(data[2] as number)++;
 			pointer += slice.length
 			if(slice.length < chunk_size) {
 				slice = new Uint8Array([...slice, ...new Array(chunk_size-slice.length).fill(0)])
 			}
-			// console.log(slice, slice.length, chunk_size)
-			const ciphertext = crypto.publicEncrypt(key, slice);
+			const ciphertext = encrypt_func(key, slice);
 			const ui8aciphertext = Jabber.buffer_to_uint8array(ciphertext);
-			// console.log('length', ui8aciphertext.length, ui8aciphertext.length && 0xFF, (ui8aciphertext.length && 0x00FF) >> 8)
 			data.push(ui8aciphertext.length & 0xFF)
 			data.push((ui8aciphertext.length & 0xFF00) >> 8)
 			data.push(ui8aciphertext)
 		}
 		return new Uint8Array(data.reduce<number[]>((p, c) => [...p, ...(typeof c === 'number' ? [c] : c)], []))
-		// const uh = crypto.createPublicKey(key);
-		// uh
-		// key.asymmetricKeyDetails
-		
-		// crypto.publicEncrypt()
 	}
-	static decrypt_private(key: crypto.KeyObject, buffer: Uint8Array): Uint8Array {
+	static decrypt(key: crypto.KeyObject, buffer: Uint8Array): Uint8Array {
 		// console.log(buffer)
 		if (compareuint8arrays(buffer.subarray(0, RSA_PACKET_SIGNATURE.length-1), RSA_PACKET_SIGNATURE))
 			throw 'no rsa packet';
 		let pointer = RSA_PACKET_SIGNATURE.length;
+		const key_type = buffer[pointer++];
+		if (+(key.type === 'private') === key_type)
+			throw 'key of same type as data; this cannot continue';
+		const decrypt_func = key.type === 'private' ? crypto.privateDecrypt : crypto.publicDecrypt;
 		let remaining_chunks = buffer[pointer++];
 		const cleartext_len_low = buffer[pointer++];
 		const cleartext_len_high = buffer[pointer++];
@@ -61,17 +81,13 @@ export class RSAData {
 			const size_low = buffer[pointer++];
 			const size_high = buffer[pointer++];
 			const size = size_low | (size_high << 8);
-			// console.log(size, size_high, size_low);
 			const ciphertext = new Uint8Array(size);
 			
 			for (let i = 0; i < size; i++) {
 				ciphertext[i] = buffer[pointer++];
 			}
 			
-			// console.log(key.asymmetricKeyDetails, key.asymmetricKeyType, key.type)
-			// console.log(Buffer.from(ciphertext), ciphertext.at(-1)!.toString(16))
-			const cleartext = Jabber.buffer_to_uint8array(crypto.privateDecrypt(key, ciphertext));
-			// console.log('cleartext', cleartext, cleartext_pointer, '/', cleartext_data.length)
+			const cleartext = Jabber.buffer_to_uint8array(decrypt_func(key, ciphertext));
 			cleartext_data.set(cleartext.subarray(0, Math.min(cleartext.length, cleartext_length - cleartext_pointer)), cleartext_pointer);
 			cleartext_pointer += cleartext.length;
 			remaining_chunks--;
@@ -84,7 +100,7 @@ export declare interface BlabberClient {
 	on(event: 'open', listener: () => void): this;
 	on(event: 'close', listener: () => void): this;
 	on(event: 'error', listener: () => void): this;
-	on(event: 'packet', listener: (packet: BlabberPacket<PacketType>) => void): this;
+	on(event: 'packet', listener: (packet: BlabberPacket<BlabberPacketType>) => void): this;
 	on<T extends keyof PacketNameMap>(event: T, listener: (packet: BlabberPacket<PacketNameMap[T]>) => void): this;
 	on<T extends keyof PacketDataMap>(event: `packet$${T}`, listener: (packet: BlabberPacket<T>) => void): this;
 	on(event: `from@${number}`, listener: (data: Uint8Array) => void): this;
@@ -117,7 +133,7 @@ export class BlabberClient extends EventEmitter {
 			this.emit('packet', packet);
 			this.emit(packet.message_class.typeName, packet);
 		})
-		this.on('DataReceivePacket', (packet: BlabberPacket<PacketType.DataReceivePacket>) => {
+		this.on('DataReceivePacket', (packet: BlabberPacket<BlabberPacketType.DataReceivePacket>) => {
 			this.emit('data_receive', packet.protobuf_message.data, packet.protobuf_message.from)
 			this.emit('from@'+packet.protobuf_message.from, packet.protobuf_message.data)
 		})
@@ -168,6 +184,7 @@ export enum JabberPacketType {
 	JabberIdentify = 3,
 	JabberMessagePacket = 4,
 	JabberHandshakeReject = 5,
+	JabberACK = 6,
 }
 
 export type JabberPacketDataMap = {
@@ -176,6 +193,7 @@ export type JabberPacketDataMap = {
 	3: jabber_protocol.JabberIdentify,
 	4: jabber_protocol.JabberMessagePacket,
 	5: jabber_protocol.JabberHandshakeReject,
+	6: jabber_protocol.JabberACK
 }
 
 const packet_map: { [K in keyof JabberPacketDataMap]: MessageType<JabberPacketDataMap[K]> } = {
@@ -184,6 +202,7 @@ const packet_map: { [K in keyof JabberPacketDataMap]: MessageType<JabberPacketDa
 	3: jabber_protocol.JabberIdentify,
 	4: jabber_protocol.JabberMessagePacket,
 	5: jabber_protocol.JabberHandshakeReject,
+	6: jabber_protocol.JabberACK
 }
 
 export class JabberPacket<K extends keyof JabberPacketDataMap> {
@@ -287,8 +306,7 @@ export class Jabber extends EventEmitter {
 			throw new Error('no');
 		return new Promise((resolve,reject) => {
 			const postfix = from === undefined ? '' : '@'+from
-			let timeout: number | undefined;
-			setTimeout(() => {
+			const timeout: ReturnType<typeof setTimeout> = setTimeout(() => {
 				if (types.length == 1)
 					this.off(`packet$${types[0]}`+postfix, end)
 				else {
@@ -346,7 +364,13 @@ export class Jabber extends EventEmitter {
 			const identify_packet = packet as JabberPacket<JabberPacketType.JabberIdentify>;
 			// console.log('identity', identify_packet.protobuf_message)
 			if (!this.username_valid(identify_packet.protobuf_message.username))
-				return this.blabber.send_to(new JabberPacket(JabberPacketType.JabberHandshakeReject).serialize(), from);
+				return;
+			if (identify_packet.protobuf_message.username === this.username &&
+				compareuint8arrays(
+					identify_packet.protobuf_message.hash,
+					Jabber.buffer_to_uint8array(crypto.hash('sha512', this.public_key.export({format: 'der', type: 'spki'}), 'buffer'))
+				))
+				return;
 			const identifier = `${identify_packet.protobuf_message.username}$${Buffer.from(identify_packet.protobuf_message.hash).toString('hex')}`
 			if (packet.protobuf_message.new) {
 				this.blabber.send_to(this.get_identify_packet().serialize(), from);
@@ -447,7 +471,7 @@ export class Jabber extends EventEmitter {
 			const cleartext_key = this.public_key.export({format: 'der', type: 'spki'});
 			// console.log(cleartext_key)
 			const encrypted_key =
-				RSAData.encrypt_public(
+				RSAData.encrypt(
 					public_key,
 					Jabber.buffer_to_uint8array(cleartext_key)
 				);
@@ -462,21 +486,34 @@ export class Jabber extends EventEmitter {
 		})
 		this.on(`packet$${JabberPacketType.JabberMessagePacket}`, (packet, from) => {
 			const contact = this.contact_list.values().find(contact => contact.client_id === from);
-			if (!contact) return console.warn('warning', 'message from unknown contact', from);
-			if (!contact.handshake_complete) return console.warn('warning', 'handshake incomplete, wont receive message from', contact.username);
+			const nack_and_log = (...log: unknown[]) => {
+				const nack = new JabberPacket(JabberPacketType.JabberACK);
+				nack.protobuf_message.signature = packet.protobuf_message.signature;
+				nack.protobuf_message.ok = true;
+				this.blabber.send_to(nack.serialize(), from);
+				console.warn(log)
+			}
+			if (!contact) return nack_and_log('warning', 'message from unknown contact', from);
+			if (!contact.handshake_complete) return nack_and_log('warning', 'handshake incomplete, wont receive message from', contact.username);
 			const ciphertext = packet.protobuf_message.encryptedMessage;
 			// console.log(ciphertext, crypto.hash('sha256', ciphertext))
 			// fs.writeFileSync('whatisithiswhat', ciphertext)
-			const cleartext = RSAData.decrypt_private(this.private_key, ciphertext);
+			const cleartext = RSAData.decrypt(this.private_key, ciphertext);
+			if (!crypto.verify(null, cleartext, contact.key!, packet.protobuf_message.signature))
+				return nack_and_log('message signature invalid');
+			const ack = new JabberPacket(JabberPacketType.JabberACK);
+			ack.protobuf_message.signature = packet.protobuf_message.signature;
+			ack.protobuf_message.ok = true;
+			this.blabber.send_to(ack.serialize(), from);
 			this.emit('message_received', cleartext, contact);
 		})
 	}
 	get_identify_packet(): JabberPacket<JabberPacketType.JabberIdentify> {
 		const identify_packet = new JabberPacket(JabberPacketType.JabberIdentify);
+
 		identify_packet.protobuf_message.username = this.username;
 		const hash = crypto.hash('sha512', this.public_key.export({format: 'der', type: 'spki'}), 'buffer')
 		identify_packet.protobuf_message.hash = Jabber.buffer_to_uint8array(hash);
-		// console.log(identify_packet.protobuf_message, identify_packet.serialize())
 		return identify_packet;
 	}
 	async initiate_handshake(contact: Contact) {
@@ -486,12 +523,13 @@ export class Jabber extends EventEmitter {
 		hello_packet.protobuf_message.me = this.get_identify_packet().protobuf_message;
 		hello_packet.protobuf_message.publicKey = Jabber.buffer_to_uint8array(this.public_key.export({format: 'der', type: 'spki'}));
 		this.blabber.send_to(hello_packet.serialize(), contact.client_id);
+
 		const response = await this.wait_for_packet_from(contact.client_id, JabberPacketType.JabberHelloResponse || JabberPacketType.JabberHandshakeReject);
 		if (response.kind === JabberPacketType.JabberHandshakeReject)
 			throw new Error('handshake rejected');
 		const good_response = response as JabberPacket<JabberPacketType.JabberHelloResponse>;
 		const encrypted_key = good_response.protobuf_message.encryptedPublicKey;
-		const raw_key = Buffer.from(RSAData.decrypt_private(this.private_key, encrypted_key));
+		const raw_key = Buffer.from(RSAData.decrypt(this.private_key, encrypted_key));
 		contact.key = crypto.createPublicKey({
 			format: 'der',
 			key: raw_key,
@@ -500,15 +538,37 @@ export class Jabber extends EventEmitter {
 		contact.handshake_complete = true;
 		this.emit('handshake_complete', contact)
 	}
-	send_message_to(contact: Contact, message: Uint8Array | string) {
+	send_message_to(contact: Contact, message: Uint8Array | string): Promise<boolean> {
 		if (!contact.handshake_complete)
 			throw 'handshake not complete';
 		if (typeof message === 'string')
 			message = this.te.encode(message);
-		const ciphertext = RSAData.encrypt_public(contact.key!, message);
 		const packet = new JabberPacket(JabberPacketType.JabberMessagePacket);
-		// console.log(ciphertext, crypto.hash('sha256', ciphertext))
+		
+		const ciphertext = RSAData.encrypt(contact.key!, message);
 		packet.protobuf_message.encryptedMessage = ciphertext;
+		const signature = Jabber.buffer_to_uint8array(crypto.sign(null, message, this.private_key))
+		packet.protobuf_message.signature = signature;
+		
 		this.blabber.send_to(packet.serialize(), contact.client_id);
+
+		return new Promise((resolve) => {
+			// deno-lint-ignore prefer-const
+			let timeout: ReturnType<typeof setTimeout>;
+			const listener = (packet: JabberPacket<JabberPacketType.JabberACK>) => {
+				if (!compareuint8arrays(
+					packet.protobuf_message.signature,
+					signature
+				)) return;
+				this.off(`packet$${JabberPacketType.JabberACK}@${contact.client_id}`, listener);
+				clearTimeout(timeout)
+				resolve(packet.protobuf_message.ok);
+			}
+			timeout = setTimeout(() => {
+				this.off(`packet$${JabberPacketType.JabberACK}@${contact.client_id}`, listener);
+				resolve(false)
+			}, this.TIMEOUT)
+			this.on(`packet$${JabberPacketType.JabberACK}@${contact.client_id}`, listener)
+		})
 	}
 }

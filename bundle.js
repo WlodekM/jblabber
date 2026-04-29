@@ -12,9 +12,9 @@ await esbuild.build({
 	format: 'esm',
 	external: ['esbuild'],
 	// minify: true,
-	minifyIdentifiers: true,
+	// minifyIdentifiers: true,
 	tsconfig: 'tsconfig.json',
-	minifyWhitespace: true,
+	// minifyWhitespace: true,
 	sourcemap: true,
 	// minifySyntax: true
 	platform: 'node',

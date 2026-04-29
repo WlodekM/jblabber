@@ -6,7 +6,7 @@ import path from "node:path";
 import crypto from 'node:crypto';
 import { Buffer } from 'node:buffer';
 import { EventEmitter } from 'node:events';
-import { Jabber, Message } from './jabber.ts';
+import { Jabber, Message, RSAData } from './jabber.ts';
 
 const flags: Record<string, string> = {};
 let i = 0;
@@ -83,6 +83,22 @@ if (
 }
 
 const username = fs.readFileSync('profile/username').toString()
+
+if (process.argv.includes('-trsa')) {
+	const te = new TextEncoder();
+	const td = new TextDecoder();
+	const a = RSAData.encrypt(public_key, te.encode(username));
+	const b = RSAData.decrypt(private_key, a);
+	console.log(td.decode(b));
+	if (td.decode(b) !== username)
+		process.exit(1);
+	const c = RSAData.encrypt(private_key, te.encode(username));
+	const d = RSAData.decrypt(public_key, c);
+	console.log(td.decode(d));
+	if (td.decode(d) !== username)
+		process.exit(1);
+	process.exit(0)
+}
 
 const contact_db: Record<string,string> = JSON.parse(fs.readFileSync('profile/contacts.json').toString())
 const jabber = new Jabber(flags.a ?? flags.address ?? 'ws://localhost:2137', username, public_key, private_key);
@@ -183,7 +199,7 @@ while (true) {
 		console.log(jabber.contact_list.entries().map(([id, contact]) => `\
 ${id}
 	username: ${contact.username}
-	key hash: ${Buffer.from(contact.key_hash).toString('hex')}
+	online: ${contact.client_id === -1 ? 'no' : 'yes'}
 	handshake complete? ${contact.handshake_complete ? 'yes' : 'no'}`).toArray().join('\n'))
 		continue
 	} else if (command === '/handshake') {
@@ -213,8 +229,11 @@ ${id}
 			console.error('not found')
 			continue
 		}
-		jabber.send_message_to(contact, args.slice(1).join(' '));
-		console.log('ok')
+		const ok = await jabber.send_message_to(contact, args.slice(1).join(' '));
+		console.log(ok ? 'ok' : 'NOT ok :(')
+		continue;
+	} else if (command === '/eval') {
+		console.log(eval(args.join(' ')))
 		continue;
 	}
 }

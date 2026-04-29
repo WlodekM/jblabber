@@ -1,4 +1,5 @@
-import ws, { WebSocketServer, WebSocket } from 'ws';
+import { WebSocketServer, type WebSocket } from 'ws';
+import type ws from 'ws';
 import type http from 'http';
 import { Buffer } from 'node:buffer';
 // import protobuf from 'google-protobuf';
@@ -225,7 +226,7 @@ export class BlabberServer extends EventEmitter {
 	 * This wil be wrapped in a DataReceivePacket message
 	 */
 	announce(from: number, data: Buffer | Uint8Array | string): void {
-		for (const [id, client] of this.clients.entries()) {
+		for (const id of this.clients.keys()) {
 			if (id === from) continue;
 			this.send_to(from, id, data)
 		}
