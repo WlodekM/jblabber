@@ -152,10 +152,10 @@ jabber.on('message_received', (message, contact) => {
 	fs.writeFileSync(path.join(contact_dir, 'messages.json'), JSON.stringify(messages));
 })
 
-if (process.argv.includes('-d')) {
-	attachEELogger(jabber, 'jabber')
-	attachEELogger(jabber.blabber, 'blabber')
-}
+if (process.argv.includes('-d') || process.argv.includes('-dj'))
+	attachEELogger(jabber, 'jabber');
+if (process.argv.includes('-d') || process.argv.includes('-db'))
+	attachEELogger(jabber.blabber, 'blabber');
 
 // const fs_contacts = fs.readdirSync('profile/contacts');
 

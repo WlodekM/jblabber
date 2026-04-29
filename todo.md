@@ -15,4 +15,4 @@
  - [ ] second node-gtk client
 
 # fixes
- - [ ] fix reconnect bugginess
+ - [x] fix reconnect bugginess

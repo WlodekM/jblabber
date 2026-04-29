@@ -8,6 +8,12 @@ message DataReceivePacket {
 message ClientListPacket {
 	repeated uint32 clients = 3;
 }
+message ClientConnectPacket {
+	uint32 client = 2;
+}
+message ClientDisconnectPacket {
+	uint32 client = 2;
+}
 message BadPacketPacket {}
 message UnknownRecieverPacket {}
 message IdentityPacket {

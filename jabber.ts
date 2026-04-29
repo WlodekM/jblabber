@@ -105,6 +105,8 @@ export declare interface BlabberClient {
 	on<T extends keyof PacketDataMap>(event: `packet$${T}`, listener: (packet: BlabberPacket<T>) => void): this;
 	on(event: `from@${number}`, listener: (data: Uint8Array) => void): this;
 	on(event: 'data_receive', listener: (data: Uint8Array, from: number) => void): this;
+	on(event: 'client_connect', listener: (client_id: number) => void): this;
+	on(event: 'client_disconnect', listener: (client_id: number) => void): this;
 }
 
 /** blabber - the websocket/p2p part of jblabber */
@@ -136,6 +138,12 @@ export class BlabberClient extends EventEmitter {
 		this.on('DataReceivePacket', (packet: BlabberPacket<BlabberPacketType.DataReceivePacket>) => {
 			this.emit('data_receive', packet.protobuf_message.data, packet.protobuf_message.from)
 			this.emit('from@'+packet.protobuf_message.from, packet.protobuf_message.data)
+		})
+		this.on('ClientConnectPacket', (packet: BlabberPacket<BlabberPacketType.ClientConnectPacket>) => {
+			this.emit('client_connect', packet.protobuf_message.client)
+		})
+		this.on('ClientDisconnectPacket', (packet: BlabberPacket<BlabberPacketType.ClientDisconnectPacket>) => {
+			this.emit('client_disconnect', packet.protobuf_message.client)
 		})
 	}
 	wait_for_packet(...types: BlabberPacketType[]): Promise<BlabberPacket<BlabberPacketType>> {
@@ -336,6 +344,9 @@ export class Jabber extends EventEmitter {
 			}
 		})
 	}
+	// clist_interval: ReturnType<typeof setInterval>;
+	// // delay between clist packets
+	// CLIST_DELAY = 30_000;
 	constructor(url: string = 'ws://localhost:2137', username: string, public_key: crypto.KeyObject, private_key: crypto.KeyObject) {
 		super()
 		this.username = username;
@@ -359,6 +370,11 @@ export class Jabber extends EventEmitter {
 			this.emit('packet@'+from, packet);
 			this.emit('packet$'+packet?.kind, packet, from);
 			this.emit('packet$'+packet?.kind+'@'+from, packet);
+		})
+		this.blabber.on('client_disconnect', (client_id) => {
+			const contact = this.contact_list.values().find(contact => contact.client_id === client_id);
+			if (!contact) return; // vroski's not even a jabber user :sob::peace_sign::wilting_flower:
+			contact.client_id = -1;
 		})
 		this.on(`packet$${JabberPacketType.JabberIdentify}`, (packet, from) => {
 			const identify_packet = packet as JabberPacket<JabberPacketType.JabberIdentify>;
@@ -507,6 +523,15 @@ export class Jabber extends EventEmitter {
 			this.blabber.send_to(ack.serialize(), from);
 			this.emit('message_received', cleartext, contact);
 		})
+		// this.clist_interval = setInterval(async () => {
+		// 	this.blabber.send_packet(BlabberPacketType.ClientListRequestPacket, {});
+		// 	const clist = await this.blabber.wait_for_packet(BlabberPacketType.ClientListPacket);
+		// 	for (const contact of this.contact_list.values()) {
+		// 		if (contact.client_id === -1) continue;
+		// 		if (contact.client_id in clist) continue;
+		// 		contact.client_id = -1
+		// 	}
+		// }, this.CLIST_DELAY)
 	}
 	get_identify_packet(): JabberPacket<JabberPacketType.JabberIdentify> {
 		const identify_packet = new JabberPacket(JabberPacketType.JabberIdentify);
