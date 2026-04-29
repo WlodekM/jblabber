@@ -3,6 +3,7 @@
  - actual message format
    * attachments
    * formatting
+ - groupchats (somehow)
 
 # improvements
 ## protocol
